@@ -363,4 +363,3 @@ Visit the [Terms of Use](https://github.com/devgaganin/Save-Restricted-Content-B
 ### Special thanks to:
 - [King of Patal](https://github.com/alreadydea) for base development of this repository.
 - [Mautrix Bridge](https://github.com/mautrix/telegram) for fast uploader connectivity bridge.
-
