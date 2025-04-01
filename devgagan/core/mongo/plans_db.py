@@ -46,4 +46,3 @@ async def check_and_remove_expired_users():
         if expire_date and expire_date < current_time:
             await remove_premium(data["_id"])
             print(f"Removed user {data['_id']} due to expired plan.")
- 

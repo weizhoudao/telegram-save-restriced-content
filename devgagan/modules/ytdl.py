@@ -16,6 +16,7 @@
 import yt_dlp
 import os
 import tempfile
+import json
 import time
 import asyncio
 import random
@@ -38,12 +39,15 @@ import logging
 import aiofiles
 from mutagen.id3 import ID3, TIT2, TPE1, COMM, APIC
 from mutagen.mp3 import MP3
+from devgagan.crawlers.hybrid.hybrid_crawler import HybridCrawler
  
 logger = logging.getLogger(__name__)
  
  
 thread_pool = ThreadPoolExecutor()
 ongoing_downloads = {}
+
+COOKIE = None
  
 def d_thumbnail(thumbnail_url, save_path):
     try:
@@ -164,16 +168,46 @@ async def process_audio(client, event, url, cookies_env_var=None):
             os.remove(download_path)
         if temp_cookie_path and os.path.exists(temp_cookie_path):
             os.remove(temp_cookie_path)
+
+@app.on_message(filters.command("setcookie") & filters.private)
+async def setcookie(_, message):
+    tmp = '' 
+    global COOKIE
+    while True:
+        cookie = await app.ask(message.chat.id, "请输入或者补充cookie, 没有补充请输入**__done__**")
+        if cookie.text == 'done':
+            break
+        lines = cookie.text.split('\n')
+        if len(lines) < 4:
+            return
+        tmp += lines[0] + '\n'
+        tmp += lines[1] + '\n'
+        tmp += lines[2] + '\n'
+        for line in lines[3:]:
+            new_line = ''
+            for col in line.split(' '):
+                if len(col) == 0:
+                    continue
+                if len(new_line) > 0:
+                    new_line += '\t'
+                new_line += col
+            new_line += '\n'
+            tmp += new_line
+    COOKIE = tmp
+    logger.info(COOKIE)
+    await app.send_message(message.chat.id, "设置成功")
+    return
+
  
 @client.on(events.NewMessage(pattern="/adl"))
 async def handler(event):
     user_id = event.sender_id
     if user_id in ongoing_downloads:
-        await event.reply("**You already have an ongoing download. Please wait until it completes!**")
+        await event.reply("**已有进行中的下载任务,请等待任务结束后再开始新的任务!**")
         return
  
     if len(event.message.text.split()) < 2:
-        await event.reply("**Usage:** `/adl <video-link>`\n\nPlease provide a valid video link!")
+        await event.reply("**用法:** `/adl <视频链接>`\n\n请输入合法的下载链接!")
         return    
  
     url = event.message.text.split()[1]
@@ -187,7 +221,7 @@ async def handler(event):
         else:
             await process_audio(client, event, url)
     except Exception as e:
-        await event.reply(f"**An error occurred:** `{e}`")
+        await event.reply(f"**出错了:** `{e}`")
     finally:
         ongoing_downloads.pop(user_id, None)
  
@@ -200,13 +234,12 @@ async def fetch_video_info(url, ydl_opts, progress_message, check_duration_and_s
              
             duration = info_dict.get('duration', 0)
             if duration and duration > 3 * 3600:   
-                await progress_message.edit("**❌ __Video is longer than 3 hours. Download aborted...__**")
+                await progress_message.edit("**❌ __视频时长超过3小时,下载终止...__**")
                 return None
  
-             
             estimated_size = info_dict.get('filesize_approx', 0)
             if estimated_size and estimated_size > 2 * 1024 * 1024 * 1024:   
-                await progress_message.edit("**🤞 __Video size is larger than 2GB. Aborting download.__**")
+                await progress_message.edit("**🤞 __视频大小超过2GB,下载终止.__**")
                 return None
  
         return info_dict
@@ -237,6 +270,8 @@ async def handler(event):
             await process_video(client, event, url, "INSTA_COOKIES", check_duration_and_size=False)
         elif "youtube.com" in url or "youtu.be" in url:
             await process_video(client, event, url, "YT_COOKIES", check_duration_and_size=True)
+        elif "douyin" in url or "tiktok" in url:
+            await process_video(client, event, url, "TIKTOK", check_duration_and_size=True)
         else:
             await process_video(client, event, url, None, check_duration_and_size=False)
  
@@ -318,15 +353,21 @@ async def process_video(client, event, url, cookies_env_var, check_duration_and_
     logger.info(f"Received link: {url}")
      
     cookies = None
-    if cookies_env_var:
-        cookies = os.getenv(cookies_env_var)
  
+    if COOKIE:
+        cookies = COOKIE
      
+    if cookies_env_var == "TIKTOK":
+        data = await HybridCrawler().hybrid_parsing_single_video(url, True)
+        ret_url = data['video_data']['nwm_video_url_HQ']
+        logger.info(ret_url)
+        msg = await event.reply(ret_url)
+        return
+
     random_filename = get_random_string() + ".mp4"
     download_path = os.path.abspath(random_filename)
     logger.info(f"Generated random download path: {download_path}")
  
-     
     temp_cookie_path = None
     if cookies:
         with tempfile.NamedTemporaryFile(delete=False, mode='w', suffix='.txt') as temp_cookie_file:
@@ -347,13 +388,18 @@ async def process_video(client, event, url, cookies_env_var, check_duration_and_
         'verbose': True,
     }
     prog = None
-    progress_message = await event.reply("**__Starting download...__**")
+    progress_message = await event.reply("**__开始下载...__**")
     logger.info("Starting the download process...")
     try:
         info_dict = await fetch_video_info(url, ydl_opts, progress_message, check_duration_and_size)
         if not info_dict:
             return
-         
+        download_url = info_dict.get('url', None)
+        if download_url:
+            progress_message = await event.reply("**__" + download_url + "__**")
+        return
+        #logger.info(info_dict)
+
         await asyncio.to_thread(download_video, url, ydl_opts)
         title = info_dict.get('title', 'Powered by Team SPY')
         k = video_metadata(download_path)      
@@ -441,7 +487,7 @@ async def split_and_upload_file(app, sender, file_path, caption):
     part_number = 0
     async with aiofiles.open(file_path, mode="rb") as f:
         while True:
-            chunk = await f.read(PART_SIZE)
+            chunk = await f.read(int(PART_SIZE))
             if not chunk:
                 break
 

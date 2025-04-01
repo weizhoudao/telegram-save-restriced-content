@@ -169,7 +169,6 @@ async def process_special_links(userbot, user_id, msg, link):
         return
     await msg.edit_text("Invalid link...")
 
-
 @app.on_message(filters.command("batch") & filters.private)
 async def batch_link(_, message):
     join = await subscribe(_, message)
@@ -227,7 +226,7 @@ async def batch_link(_, message):
         await message.reply(response_message)
         return
         
-    join_button = InlineKeyboardButton("Join Channel", url="https://t.me/team_spy_pro")
+    join_button = InlineKeyboardButton("加入频道", url="https://t.me/savedogpub")
     keyboard = InlineKeyboardMarkup([[join_button]])
     pin_msg = await app.send_message(
         user_id,
