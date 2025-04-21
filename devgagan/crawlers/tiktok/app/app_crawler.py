@@ -64,6 +64,9 @@ with open(f"{path}/config.yaml", "r", encoding="utf-8") as f:
 
 class TikTokAPPCrawler:
 
+    async def set_tiktok_cookie(self, cookie: str):
+        config["TokenManager"]["tiktok"]["headers"]["Cookie"] = cookie
+
     # 从配置文件中获取TikTok的请求头
     async def get_tiktok_headers(self):
         tiktok_config = config["TokenManager"]["tiktok"]

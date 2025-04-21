@@ -37,29 +37,19 @@ from devgagan.crawlers.douyin.web.web_crawler import DouyinWebCrawler  # 导入�
 from devgagan.crawlers.tiktok.web.web_crawler import TikTokWebCrawler  # 导入TikTok Web爬虫
 from devgagan.crawlers.tiktok.app.app_crawler import TikTokAPPCrawler  # 导入TikTok App爬虫
 
-class DouyinVideoData:
-    def __init__(self):
-        self.wm_video_url_HQ = ""
-        self.nwm_video_url_HQ = ""
-
-class DouyinObj:
-    def __init__(self, data=None):
-        self.type = ""
-        self.platform = ""
-        if data:
-            self.video_data = data
-
 class HybridCrawler:
     def __init__(self):
         self.DouyinWebCrawler = DouyinWebCrawler()
         self.TikTokWebCrawler = TikTokWebCrawler()
         self.TikTokAPPCrawler = TikTokAPPCrawler()
 
-    async def hybrid_parsing_single_video(self, url: str, minimal: bool = False):
+    async def hybrid_parsing_single_video(self, url: str, minimal: bool = False, cookie: str = ""):
         # 解析抖音视频/Parse Douyin video
         if "douyin" in url:
             platform = "douyin"
             aweme_id = await self.DouyinWebCrawler.get_aweme_id(url)
+            if len(cookie) > 0:
+                await self.DouyinWebCrawler.set_douyin_cookie(cookie)
             data = await self.DouyinWebCrawler.fetch_one_video(aweme_id)
             data = data.get("aweme_detail")
             # $.aweme_detail.aweme_type
@@ -72,6 +62,9 @@ class HybridCrawler:
             # 2024-09-14: Switch to TikTokAPPCrawler instead of TikTokWebCrawler
             # data = await self.TikTokWebCrawler.fetch_one_video(aweme_id)
             # data = data.get("itemInfo").get("itemStruct")
+
+            if len(cookie) > 0:
+                await self.TikTokAPPCrawler.set_tiktok_cookie(cookie)
 
             data = await self.TikTokAPPCrawler.fetch_one_video(aweme_id)
             # $.imagePost exists if aweme_type is photo
@@ -139,7 +132,8 @@ class HybridCrawler:
             if url_type == 'video':
                 # 将信息储存在字典中/Store information in a dictionary
                 uri = data['video']['play_addr']['uri']
-                wm_video_url_HQ = data['video']['play_addr']['url_list'][0]
+                #wm_video_url_HQ = data['video']['play_addr']['url_list'][0]
+                wm_video_url_HQ = data['video']['play_addr']['url_list'][2]
                 wm_video_url = f"https://aweme.snssdk.com/aweme/v1/playwm/?video_id={uri}&radio=1080p&line=0"
                 nwm_video_url_HQ = wm_video_url_HQ.replace('playwm', 'play')
                 nwm_video_url = f"https://aweme.snssdk.com/aweme/v1/play/?video_id={uri}&ratio=1080p&line=0"
@@ -149,7 +143,8 @@ class HybridCrawler:
                             'wm_video_url': wm_video_url,
                             'wm_video_url_HQ': wm_video_url_HQ,
                             'nwm_video_url': nwm_video_url,
-                            'nwm_video_url_HQ': nwm_video_url_HQ
+                            'nwm_video_url_HQ': nwm_video_url_HQ,
+                            'bit_rate':data['video']['bit_rate']
                         }
                 }
             # 抖音图片数据处理/Douyin image data processing
@@ -221,7 +216,8 @@ class HybridCrawler:
         # url = "https://www.tiktok.com/@minecraft/photo/7369296852669205791"
         url = input("请输入要解析的url: ")
         minimal = True
-        result = await self.hybrid_parsing_single_video(url, minimal=minimal)
+        #result = await self.hybrid_parsing_single_video(url, minimal=minimal)
+        result = await self.DouyinWebCrawler.fetch_user_post_videos(url, 0, 2)
         print(result)
 
         # 占位

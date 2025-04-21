@@ -1,0 +1,411 @@
+from config import API_ID, API_HASH, FREEMIUM_LIMIT, PREMIUM_LIMIT, OWNER_ID, DEFAULT_SESSION, KS_GRAPHQL_QUERY
+import yt_dlp
+import requests
+import os
+import tempfile
+import string
+from devgagan import app, userrbot
+from pyrogram import Client,filters
+from pyrogram import enums
+from pyrogram.types import MessageEntity
+from devgagan.modules.shrink import is_user_verified
+import random
+import asyncio
+from devgagan.core.func import *
+import json
+from devgagan.crawlers.douyin.web.web_crawler import DouyinWebCrawler
+from devgagan.crawlers.hybrid.hybrid_crawler import HybridCrawler
+from devgagan.crawlers.bilibili.web.web_crawler import BilibiliWebCrawler
+from devgagan.crawlers.parser import parse_video_share_url, parse_video_id, VideoSource
+import logging
+import re
+
+logger = logging.getLogger(__name__)
+ongoing_downloads = {}
+
+async def process_video(message, url):
+    start_time = time.time()
+    logger.info(f"process link: {url}")
+
+    cookies = os.environ.get(str(message.chat.id) + '_cookie', '')
+
+    api_data = await HybridCrawler().hybrid_parsing_single_video(url, True, cookies)
+    download_url = api_data['video_data']['nwm_video_url_HQ']
+    logger.info(api_data)
+    await reply_dowload_url(message, download_url)
+
+async def precheck(app, message):
+    # 必须关注频道
+    join = await subscribe(app, message)
+    if join == 1:
+        return False
+    # 会员或者有免费体验资格
+    user_id = message.chat.id
+    freecheck = await chk_user(message, user_id)
+    if freecheck == 1 and FREEMIUM_LIMIT == 0 and user_id not in OWNER_ID and not await is_user_verified(user_id):
+        await message.reply("请购买会员或者通过/token指令获得免费体验资格")
+        return False
+    # 判断是否有任务进行中
+    if user_id in ongoing_downloads:
+        await message.reply("**已有进行中的下载任务,请等待任务结束后再开始新的任务!**")
+        return False
+
+async def process_bilibili_video(message, url):
+    logger.info(f"process link: {url}")
+
+    cookies = os.environ.get(str(message.chat.id) + '_cookie', '')
+
+    bv_id = await BilibiliWebCrawler().extract_bvid(url)
+    if len(bv_id) == 0:
+        await message.reply("下载失败，请输入正确的视频链接")
+        return
+    api_data = await BilibiliWebCrawler().fetch_one_video(bv_id)
+    cid = api_data['data']['cid']
+    if cid == 0:
+        await message.reply("下载失败，请输入正确的视频链接")
+        return
+    result = await BilibiliWebCrawler().fetch_video_playurl(bv_id, str(cid))
+    download_url = result['data']['dash']['video'][0]['baseUrl']
+    await reply_dowload_url(message, download_url)
+
+async def real_process_kuaishou_or_xhs(message, url):
+        video_info = await parse_video_share_url(url)
+        await reply_dowload_url(message, video_info.video_url)
+
+async def fetch_video_info(url, ydl_opts):
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info_dict = ydl.extract_info(url, download=False)
+        return info_dict
+
+def get_random_string(length=7):
+    characters = string.ascii_letters + string.digits
+    return ''.join(random.choice(characters) for _ in range(length)) 
+
+async def reply_dowload_url(message, download_url):
+    await message.reply(download_url, entities=[
+        MessageEntity(
+            type=enums.MessageEntityType.URL,
+            offset=0,
+            length=len(download_url)
+            )
+        ])
+
+async def process_youtube(message, url):
+
+    cookies = os.environ.get(str(message.chat.id) + '_ytcookie', None)
+
+    random_filename = get_random_string() + ".mp4"
+    download_path = os.path.abspath(random_filename)
+    logger.info(f"Generated random download path: {download_path}")
+
+    temp_cookie_path = None
+    if cookies:
+        with tempfile.NamedTemporaryFile(delete=False, mode='w', suffix='.txt') as temp_cookie_file:
+            temp_cookie_file.write(cookies)
+            temp_cookie_path = temp_cookie_file.name
+        logger.info(f"Created temporary cookie file at: {temp_cookie_path}")
+
+    thumbnail_file = None
+    metadata = {'width': None, 'height': None, 'duration': None, 'thumbnail': None}
+
+    ydl_opts = {
+            'outtmpl': download_path,
+            'format': 'best',
+            'cookiefile': temp_cookie_path if temp_cookie_path else None,
+            'writethumbnail': True,
+            'verbose': True,
+            }
+
+    info_dict = await fetch_video_info(url, ydl_opts)
+    if not info_dict:
+        await message.reply("下载失败,请稍后重试")
+        return
+    if 'url' in info_dict:
+        download_url = info_dict['url']
+        await reply_dowload_url(message, download_url)
+    else:
+        await message.reply("下载失败,请稍候重试")
+
+@app.on_message(filters.command("single") & filters.private)
+async def process_single_video(_, message):
+    result = await precheck(_, message)
+    if result == False:
+        return
+    if len(message.text.split()) < 2:
+        await message.reply("**用法:** `/single <视频链接>`\n\n请按要求输入指令!")
+        return
+    url = message.text.split()[1]
+    logger.info(f"Received link: {url}")
+    ongoing_downloads[message.chat.id] = True
+    try:
+        if "douyin" in url or "tiktok" in url:
+            await process_video(message, url)
+        elif "bilibili" in url or "b23.tv" in url:
+            await process_bilibili_video(message, url)
+        elif "youtube" in url:
+            await process_youtube(message, url)
+        else:
+            await real_process_kuaishou_or_xhs(message, url)
+    except Exception as e:
+        await message.reply(f"**出错了:**{e}")
+    finally:
+        ongoing_downloads.pop(message.chat.id, None)
+
+async def process_douyin_homepage(message, input_url, download_count):
+    douyin_id = await DouyinWebCrawler().get_sec_user_id(input_url)
+    if douyin_id == None or len(douyin_id) == 0:
+        logger.error(f"input url is invalid: {input_url}")
+        await message.reply("非法url，请重新输入")
+        return
+    current_count = 0
+    page_size = 10
+    cursor = 0
+    while current_count < download_count:
+        query_size = download_count - current_count
+        if query_size > page_size:
+            query_size = page_size
+        api_data = await DouyinWebCrawler().fetch_user_post_videos(douyin_id, cursor, query_size)
+        cursor = api_data['max_cursor']
+        has_more = api_data['has_more']
+        logger.info(f"cursor: {cursor}, hasmore:{has_more}")
+        for video_data in api_data['aweme_list']:
+            if current_count >= download_count:
+                break
+            if 'video' in video_data:
+                await reply_dowload_url(message, video_data['video']['play_addr']['url_list'][2])
+                current_count += 1
+                time.sleep(0.1)
+        if has_more != 1:
+            break
+        time.sleep(1)
+
+def get_kuaishou_userid(url: str) -> str:
+    """
+    从快手用户主页URL中提取userid
+    :param url: 快手用户主页URL（支持PC端和移动端格式）
+    :return: 用户userid字符串
+    """
+    # 匹配两种常见URL格式（含PC端和移动端）
+    patterns = [
+        r'profile/([a-zA-Z0-9]+)',  # PC端示例：https://live.kuaishou.com/profile/xxx[9](@ref)
+        r'short-video/([a-zA-Z0-9]+)'  # 移动端示例：https://v.kuaishou.com/xxx
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    logger.error(f"invalid kuaishou homepage url: {url}")
+    return ""
+
+async def process_kuaishou_homepage(message, input_url, download_count):
+    user_id = get_kuaishou_userid(input_url)
+    if len(user_id) == 0:
+        message.reply(message.chat.id, "请输入正确的主页url")
+        return
+
+    url = "https://www.kuaishou.com/graphql"
+    cookies = os.environ.get(str(message.chat.id) + '_cookie', None)
+    headers = {
+            'Accept': '*/*',
+            'Accept-Encoding': 'gzip, deflate, br, zstd',
+            'Accept-Language': 'zh-CN,zh;q=0.9',
+            'Connection': 'keep-alive',
+            'Content-Type': 'application/json',
+            'Cookie': cookies,
+            'Host': 'www.kuaishou.com',
+            'Origin': 'https://www.kuaishou.com',
+            'Referer': f'https://www.kuaishou.com/profile/{user_id}',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-origin',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+            'sec-ch-ua': '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"'
+            }
+
+    current_count = 0
+    pcursor = None
+    while current_count < download_count:
+        payload = {
+                "operationName": "visionProfilePhotoList",
+                "variables": {
+                    "userId": user_id,
+                    "pcursor": pcursor if pcursor else None,
+                    "page": "profile"
+                    },
+                "query": KS_GRAPHQL_QUERY
+    }
+        response = requests.post(
+                url,
+                headers=headers,
+                json=payload  # 自动处理Content-Type和JSON序列化
+                )
+        response.raise_for_status()
+        data = response.json()
+        if data.get('data'):
+            for feed in data['data']['visionProfilePhotoList']['feeds']:
+                if current_count >= download_count:
+                    break
+                await reply_dowload_url(message, feed['photo']['photoUrl'])
+                time.sleep(0.1)
+                current_count += 1
+            pcursor = data['data']['visionProfilePhotoList']['pcursor']
+        time.sleep(1)
+
+async def process_youtube_post_list(message, user_url, max_count):
+    """
+    获取用户主页视频下载地址
+
+    参数：
+    user_url - 用户主页/频道链接
+    max_count - 需要获取的视频数量（默认5）
+    cookies_file - Cookie文件路径
+    browser_name - 浏览器名称
+    """
+    cookies = os.environ.get(str(message.chat.id) + '_ytcookie', None)
+    temp_cookie_path = None
+    if cookies:
+        with tempfile.NamedTemporaryFile(delete=False, mode='w', suffix='.txt') as temp_cookie_file:
+            temp_cookie_file.write(cookies)
+            temp_cookie_path = temp_cookie_file.name
+        logger.info(f"Created temporary cookie file at: {temp_cookie_path}")
+
+    try:
+        # 第一阶段：获取视频列表
+        list_opts = {
+                'noplaylist': False,
+                'extract_flat': 'in_playlist',
+                'playlist_items': f'1-{max_count}',
+                'quiet': True,
+                'no_warnings': True,
+                'cookiefile': temp_cookie_path if temp_cookie_path else None,
+                }
+
+        with yt_dlp.YoutubeDL(list_opts) as ydl:
+            # 获取用户主页视频列表
+            list_info = ydl.extract_info(user_url, download=False)
+
+            if not list_info or 'entries' not in list_info:
+                logger.error("❌ 未找到视频列表，请检查链接是否正确")
+                message.reply("❌ 未找到视频列表，请检查链接是否正确")
+                return
+
+            videos = list_info['entries'][:max_count]
+            logger.info(f"🎬 共找到 {len(videos)} 个视频\n")
+
+            # 第二阶段：逐个获取视频详情
+            detail_opts = {
+                    'noplaylist': True,
+                    'quiet': True,
+                    'no_warnings': True,
+                    'cookiefile': temp_cookie_path if temp_cookie_path else None,
+                    }
+
+            with yt_dlp.YoutubeDL(detail_opts) as detail_ydl:
+                for idx, video in enumerate(videos, 1):
+                    if not video.get('url'):
+                        continue
+
+                    try:
+                        # 获取单个视频详情
+                        video_info = detail_ydl.extract_info(video['url'], download=False)
+
+                        if 'formats' in video_info:
+                            best_url = next(
+                                    (f['url'] for f in reversed(video_info['formats'])
+                                        if f.get('url')),
+                                    None
+                                    )
+                            if best_url:
+                                await reply_dowload_url(message, best_url)
+                            else:
+                                logger.error("⚠️ 未找到有效下载地址")
+                        else:
+                            logger.error("⚠️ 该视频可能受访问限制")
+
+                    except yt_dlp.utils.DownloadError as e:
+                        logger.error(f"❌ 获取失败：{str(e)}")
+                        continue
+
+    except Exception as e:
+        logger.error(f"发生严重错误：{str(e)}")
+        message.reply(f"发生严重错误：{str(e)}")
+
+
+# 下载用户首页的视频
+@app.on_message(filters.command("userpost") & filters.private)
+async def process_homepage_download(_, message):
+    # 必须关注频道
+    join = await subscribe(_, message)
+    if join == 1:
+        return
+    # 会员才能操作
+    user_id = message.chat.id
+    freecheck = await chk_user(message, user_id)
+    if freecheck == 1 and user_id not in OWNER_ID:
+        await message.reply("**仅会员可操作!**")
+        return
+    # 判断是否有任务进行中
+    if user_id in ongoing_downloads:
+        await message.reply("**已有进行中的下载任务,请等待任务结束后再开始新的任务!**")
+        return
+
+    if len(message.text.split()) < 3:
+        await message.reply("**用法:** `/userpost <用户主页url> <要下载视频数量>`\n\n请按照要求输入指令!")
+        return
+
+    input_url = message.text.split()[1]
+    download_count = int(message.text.split()[2])
+    ongoing_downloads[user_id] = True
+
+    try:
+        if 'douyin' in input_url:
+            await process_douyin_homepage(message, input_url, download_count)
+        elif 'kuaishou' in input_url:
+            await process_kuaishou_homepage(message, input_url, download_count)
+        elif 'youtube' in input_url:
+            await process_youtube_post_list(message, input_url, download_count)
+    except Exception as e:
+        await message.reply(f"**出错了:**{e}")
+    finally:
+        ongoing_downloads.pop(user_id, None)
+
+@app.on_message(filters.command("setcookie") & filters.private)
+async def setcookie(_, message):
+    cookie = ''
+    while True:
+        msg = await app.ask(message.chat.id, "请输入或者补充cookie, 没有补充请输入**done**")
+        if msg.text == 'done':
+            break
+        cookie += msg.text
+    os.environ[str(message.chat.id) + '_cookie'] = cookie
+    await app.send_message(message.chat.id, "设置成功")
+
+@app.on_message(filters.command("setytcookie") & filters.private)
+async def setcookie(_, message):
+    tmp = '' 
+    while True:
+        cookie = await app.ask(message.chat.id, "请输入或者补充cookie, 没有补充请输入**__done__**")
+        if cookie.text == 'done':
+            break
+        lines = cookie.text.split('\n')
+        if len(lines) < 4:
+            return
+        tmp += lines[0] + '\n'
+        tmp += lines[1] + '\n'
+        tmp += lines[2] + '\n'
+        for line in lines[3:]:
+            new_line = ''
+            for col in line.split(' '):
+                if len(col) == 0:
+                    continue
+                if len(new_line) > 0:
+                    new_line += '\t'
+                new_line += col
+            new_line += '\n'
+            tmp += new_line
+    os.environ[str(message.chat.id) + '_ytcookie'] = tmp
+    logger.info(tmp)
+    await app.send_message(message.chat.id, "设置成功")
+    return

@@ -80,6 +80,9 @@ class TikTokWebCrawler:
     def __init__(self):
         self.proxy_pool = None
 
+    async def set_tiktok_cookie(self, cookie: str):
+        config["TokenManager"]["tiktok"]["headers"]["Cookie"] = cookie
+
     # 从配置文件中获取TikTok的请求头
     async def get_tiktok_headers(self):
         tiktok_config = config["TokenManager"]["tiktok"]

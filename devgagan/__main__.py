@@ -17,7 +17,7 @@ import importlib
 import gc
 from pyrogram import idle
 from devgagan.modules import ALL_MODULES
-from devgagan.core.mongo.plans_db import check_and_remove_expired_users
+from devgagan.core.mongo.vip_db import check_and_remove_expired_users
 from aiojobs import create_scheduler
 
 # ----------------------------Bot-Start---------------------------- #
@@ -35,20 +35,12 @@ async def schedule_expiry_check():
 async def devggn_boot():
     for all_module in ALL_MODULES:
         importlib.import_module("devgagan.modules." + all_module)
-    print("""
----------------------------------------------------
-📂 Bot Deployed successfully ...
-📝 Description: A Pyrogram bot for downloading files from Telegram channels or groups 
-                and uploading them back to Telegram.
-🛠️ Version: 2.0.5
-📜 License: MIT License
----------------------------------------------------
-""")
+    print("下载运行成功")
 
     asyncio.create_task(schedule_expiry_check())
-    print("Auto removal started ...")
+    print("自动清理过期会员 ...")
     await idle()
-    print("Bot stopped...")
+    print("正在停止...")
 
 
 if __name__ == "__main__":

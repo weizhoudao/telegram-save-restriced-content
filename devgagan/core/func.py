@@ -16,14 +16,14 @@ import math
 import time , re
 from pyrogram import enums
 from config import CHANNEL_ID, OWNER_ID 
-from devgagan.core.mongo.plans_db import premium_users
+from devgagan.core.mongo.vip_db import vips
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 import cv2
 from pyrogram.errors import FloodWait, InviteHashInvalid, InviteHashExpired, UserAlreadyParticipant, UserNotParticipant
 from datetime import datetime as dt
 import asyncio, subprocess, re, os, time
 async def chk_user(message, user_id):
-    user = await premium_users()
+    user = await vips()
     if user_id in user or user_id in OWNER_ID:
         return 0
     else:

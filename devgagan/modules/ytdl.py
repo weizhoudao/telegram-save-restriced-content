@@ -48,6 +48,37 @@ thread_pool = ThreadPoolExecutor()
 ongoing_downloads = {}
 
 COOKIE = None
+
+@app.on_message(filters.command("setcookiex") & filters.private)
+async def setcookie(_, message):
+    tmp = '' 
+    global COOKIE
+    while True:
+        cookie = await app.ask(message.chat.id, "请输入或者补充cookie, 没有补充请输入**__done__**")
+        if cookie.text == 'done':
+            break
+        lines = cookie.text.split('\n')
+        if len(lines) < 4:
+            return
+        tmp += lines[0] + '\n'
+        tmp += lines[1] + '\n'
+        tmp += lines[2] + '\n'
+        for line in lines[3:]:
+            new_line = ''
+            for col in line.split(' '):
+                if len(col) == 0:
+                    continue
+                if len(new_line) > 0:
+                    new_line += '\t'
+                new_line += col
+            new_line += '\n'
+            tmp += new_line
+    COOKIE = tmp
+    logger.info(COOKIE)
+    await app.send_message(message.chat.id, "设置成功")
+    return
+
+
  
 def d_thumbnail(thumbnail_url, save_path):
     try:
@@ -169,38 +200,10 @@ async def process_audio(client, event, url, cookies_env_var=None):
         if temp_cookie_path and os.path.exists(temp_cookie_path):
             os.remove(temp_cookie_path)
 
-@app.on_message(filters.command("setcookie") & filters.private)
-async def setcookie(_, message):
-    tmp = '' 
-    global COOKIE
-    while True:
-        cookie = await app.ask(message.chat.id, "请输入或者补充cookie, 没有补充请输入**__done__**")
-        if cookie.text == 'done':
-            break
-        lines = cookie.text.split('\n')
-        if len(lines) < 4:
-            return
-        tmp += lines[0] + '\n'
-        tmp += lines[1] + '\n'
-        tmp += lines[2] + '\n'
-        for line in lines[3:]:
-            new_line = ''
-            for col in line.split(' '):
-                if len(col) == 0:
-                    continue
-                if len(new_line) > 0:
-                    new_line += '\t'
-                new_line += col
-            new_line += '\n'
-            tmp += new_line
-    COOKIE = tmp
-    logger.info(COOKIE)
-    await app.send_message(message.chat.id, "设置成功")
-    return
-
  
 @client.on(events.NewMessage(pattern="/adl"))
 async def handler(event):
+    return
     user_id = event.sender_id
     if user_id in ongoing_downloads:
         await event.reply("**已有进行中的下载任务,请等待任务结束后再开始新的任务!**")
@@ -251,9 +254,9 @@ def download_video(url, ydl_opts):
  
 @client.on(events.NewMessage(pattern="/dl"))
 async def handler(event):
+    return
     user_id = event.sender_id
  
-     
     if user_id in ongoing_downloads:
         await event.reply("**You already have an ongoing ytdlp download. Please wait until it completes!**")
         return

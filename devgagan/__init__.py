@@ -59,15 +59,22 @@ telethon_client = TelegramClient('telethon_session', API_ID, API_HASH).start(bot
 tclient = AsyncIOMotorClient(MONGO_DB)
 tdb = tclient["telegram_bot"]  # Your database
 token = tdb["tokens"]  # Your tokens collection
+user_cookies = tdb["user_cookies"]
 
 async def create_ttl_index():
     """Ensure the TTL index exists for the `tokens` collection."""
     await token.create_index("expires_at", expireAfterSeconds=0)
 
+async def create_cookie_index():
+    await user_cookies.create_index("user_id")
+    await user_cookies.create_index("formats.format")
+
 # Run the TTL index creation when the bot starts
 async def setup_database():
     await create_ttl_index()
     print("MongoDB TTL index created.")
+    await create_cookie_index()
+    print("user cookie index created")
 
 async def restrict_bot():
     global BOT_ID, BOT_NAME, BOT_USERNAME

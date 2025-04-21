@@ -39,12 +39,12 @@ import yaml  # 配置文件
 import re
 
 # 基础爬虫客户端和哔哩哔哩API端点
-from crawlers.base_crawler import BaseCrawler
-from crawlers.bilibili.web.endpoints import BilibiliAPIEndpoints
+from devgagan.crawlers.base_crawler import BaseCrawler
+from devgagan.crawlers.bilibili.web.endpoints import BilibiliAPIEndpoints
 # 哔哩哔哩工具类
-from crawlers.bilibili.web.utils import EndpointGenerator, bv2av, ResponseAnalyzer
+from devgagan.crawlers.bilibili.web.utils import EndpointGenerator, bv2av, ResponseAnalyzer
 # 数据请求模型
-from crawlers.bilibili.web.models import UserPostVideos, UserProfile, ComPopular, UserDynamic, PlayUrl
+from devgagan.crawlers.bilibili.web.models import UserPostVideos, UserProfile, ComPopular, UserDynamic, PlayUrl
 
 # 配置文件路径
 path = os.path.abspath(os.path.dirname(__file__))
