@@ -66,7 +66,7 @@ async def check_interval(user_id, freecheck):
 
     return True, None
 
-async def set_interval(user_id, interval_minutes=45):
+async def set_interval(user_id, interval_minutes=OPER_INTERNAL):
     now = datetime.now()
     # Set the cooldown interval for the user
     interval_set[user_id] = now + timedelta(seconds=interval_minutes)

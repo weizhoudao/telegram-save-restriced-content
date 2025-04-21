@@ -23,7 +23,7 @@ from devgagan import app
 from devgagan.core.func import *
 from datetime import datetime, timedelta
 from motor.motor_asyncio import AsyncIOMotorClient
-from config import MONGO_DB, WEBSITE_URL, AD_API, LOG_GROUP, OWNER_ID
+from config import MONGO_DB, WEBSITE_URL, AD_API, LOG_GROUP, OWNER_ID,FREE_VIP_TIME
 from devgagan.modules.user_operation import AsyncOperationTracker
  
  
@@ -117,7 +117,7 @@ async def smart_handler(client, message):
             "user_id": user_id,
             "param": param,
             "created_at": datetime.utcnow(),
-            "expires_at": datetime.utcnow() + timedelta(minutes=1),
+            "expires_at": datetime.utcnow() + timedelta(minutes=FREE_VIP_TIME),
         })
         await trial_user.insert_one({
             "user_id": user_id,
