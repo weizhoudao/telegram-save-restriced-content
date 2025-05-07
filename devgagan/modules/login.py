@@ -20,7 +20,9 @@ import asyncio
 import string
 from devgagan.core.mongo import db
 from devgagan.core.func import subscribe, chk_user
+from devgagan.core.user_log import user_logger
 from config import API_ID as api_id, API_HASH as api_hash
+from devgagan.modules.rate_limiter import rate_limiter
 from pyrogram.errors import (
     ApiIdInvalid,
     PhoneNumberInvalid,
@@ -54,7 +56,7 @@ async def delete_session_files(user_id):
         return True  # Files were deleted
     return False  # No files found
 
-@app.on_message(filters.command("logout"))
+@app.on_message(filters.command("logout") & filters.private)
 async def clear_db(client, message):
     user_id = message.chat.id
     files_deleted = await delete_session_files(user_id)
@@ -67,9 +69,12 @@ async def clear_db(client, message):
         await message.reply("✅ Your session data and files have been cleared from memory and disk.")
     else:
         await message.reply("✅ Logged out with flag -m")
+
+    await user_logger.log_action(message.from_user,"command","logout")
         
     
-@app.on_message(filters.command("login"))
+@app.on_message(filters.command("login") & filters.private)
+@rate_limiter.rate_limited
 async def generate_session(_, message):
     joined = await subscribe(_, message)
     if joined == 1:
@@ -125,3 +130,4 @@ async def generate_session(_, message):
     await db.set_session(user_id, string_session)
     await client.disconnect()
     await otp_code.reply("✅ 登录成功!")
+    await user_logger.log_action(message.from_user,"command","login")

@@ -23,9 +23,10 @@ from devgagan import app
 from devgagan.core.func import *
 from datetime import datetime, timedelta
 from motor.motor_asyncio import AsyncIOMotorClient
-from config import MONGO_DB, WEBSITE_URL, AD_API, LOG_GROUP, OWNER_ID,FREE_VIP_TIME
+from config import MONGO_DB, OWNER_ID,FREE_VIP_TIME
+from devgagan.core.user_log import user_logger
 from devgagan.modules.user_operation import AsyncOperationTracker
- 
+from devgagan.modules.rate_limiter import rate_limiter
  
 tclient = AsyncIOMotorClient(MONGO_DB)
 tdb = tclient["telegram_bot"]
@@ -50,11 +51,20 @@ async def is_already_trial(user_id):
 
 async def del_trial_user(user_id):
     session = await trial_user.delete_one({"user_id": user_id})
-    return session is not None
+    print(session)
+    return session.deleted_count > 0
+
+
+@app.on_message(filters.command("get_trial") & filters.user(OWNER_ID) & filters.private)
+async def get_trial_user_handler(client, message):
+    user_id = int(message.text.split()[1])
+    session = await trial_user.find_one({"user_id": user_id})
+    text = f"{session}"
+    await message.reply(text)
 
 @app.on_message(filters.command("del_trial") & filters.user(OWNER_ID) & filters.private)
 async def del_trial_user_handler(client, message):
-    user_id = message.chat.id
+    user_id = int(message.text.split()[1])
     if await del_trial_user(user_id):
         await message.reply("删除成功")
     else:
@@ -67,7 +77,8 @@ async def reset_user_quota_handler(client, message):
     else:
         await message.reply("重置成功")
  
-@app.on_message(filters.command("start"))
+@app.on_message(filters.command("start") & filters.private)
+@rate_limiter.rate_limited
 async def token_handler(client, message):
     """Handle the /token command."""
     join = await subscribe(client, message)
@@ -93,8 +104,10 @@ async def token_handler(client, message):
         ),
         reply_markup=keyboard
     )
+    await user_logger.log_action(message.from_user,"command",message.text)
 
-@app.on_message(filters.command("tryvip"))
+@app.on_message(filters.command("tryvip") & filters.private)
+@rate_limiter.rate_limited
 async def smart_handler(client, message):
     user_id = message.chat.id
      
@@ -125,3 +138,12 @@ async def smart_handler(client, message):
             "created_at": datetime.utcnow(),
         })
         await message.reply("🚀 30分钟试用已激活！\n\n生效后你将可以体验\n1. 30分钟不限制使用\n2.批量下载,最高支持一次性下载20个视频或者音频")
+
+    await user_logger.log_action(message.from_user,"command",message.text)
+
+
+@app.on_message(filters.private & filters.command("force_flush") & filters.user(OWNER_ID))
+async def force_flush(client, message):
+    """手动触发日志刷新命令"""
+    await user_logger.flush_buffer()
+    await message.reply("日志缓冲区已强制刷新")

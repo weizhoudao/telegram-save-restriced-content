@@ -256,6 +256,8 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
             await handle_sticker(app, msg, target_chat_id, topic_id, edit_id, LOG_GROUP)
             return
 
+        #await app.edit_message_text(sender, edit_id, "出于带宽成本考虑, 暂不支持此类型消息下载. 如有需求下载此类消息请联系客服.")
+        #return
         
         # Handle file media (photo, document, video)
         file_size = get_message_file_size(msg)
@@ -668,7 +670,7 @@ async def callback_query_handler(event):
         await event.respond('Please send the photo you want to set as the thumbnail.')
     
     elif event.data == b'pdfwt':
-        await event.respond("Watermark is Pro+ Plan.. contact @kingofpatal")
+        await event.respond("Watermark is Pro+ Plan..")
         return
 
     elif event.data == b'uploadmethod':

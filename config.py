@@ -9,12 +9,16 @@ BOT_TOKEN = getenv("BOT_TOKEN", "")
 OWNER_ID = list(map(int, getenv("OWNER_ID", "").split()))
 MONGO_DB = getenv("MONGO_DB", "")
 LOG_GROUP = getenv("LOG_GROUP", "")
+USER_LOG_GROUP = getenv("USER_LOG_GROUP", "")
 CHANNEL_ID = int(getenv("CHANNEL_ID", ""))
-FREEMIUM_LIMIT = int(getenv("FREEMIUM_LIMIT", "0"))
+FREEMIUM_LIMIT = int(getenv("FREEMIUM_LIMIT", "5"))
 PREMIUM_LIMIT = int(getenv("PREMIUM_LIMIT", "500"))
 FREE_PER_DAY = int(10) # 免费用户每天可以操作的次数
 FREE_VIP_TIME = int(30) # 体验vip时长 30min
 OPER_INTERNAL = int(45) # 免费用户操作间隔 45s
+STRING = getenv("STRING", None)
+DEFAULT_SESSION = getenv("DEFAUL_SESSION", None)
+MAX_CONCURRENT_TASKS = int(getenv("MAX_CONCURRENT_TASKS", "5"))
 
 #--------------------------
 # 快手相关

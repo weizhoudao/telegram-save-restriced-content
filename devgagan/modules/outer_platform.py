@@ -11,7 +11,9 @@ from pyrogram import Client, filters, enums
 from pyrogram.types import MessageEntity
 from devgagan.modules.shrink import is_user_verified
 from devgagan.modules.user_operation import AsyncOperationTracker
+from devgagan.core.user_log import user_logger
 from devgagan.modules.main import set_interval, check_interval
+from devgagan.modules.rate_limiter import rate_limiter
 import random
 import asyncio
 import json
@@ -24,6 +26,7 @@ from devgagan.crawlers.douyin.web.web_crawler import DouyinWebCrawler
 from devgagan.crawlers.hybrid.hybrid_crawler import HybridCrawler
 from devgagan.crawlers.bilibili.web.web_crawler import BilibiliWebCrawler
 from devgagan.crawlers.parser import parse_video_share_url, parse_video_id, VideoSource
+from devgagan.crawlers.kuaishou.app.app import KS
 from devgagan.core.func import chk_user, subscribe
 from devgagan.utils import (
     get_random_string,
@@ -63,9 +66,13 @@ PLATFORM_HANDLERS = [
         processor="process_bilibili"
     ),
     PlatformHandler(
-        pattern=re.compile(r"(youtube\.com|youtu\.be)"),
+        pattern=re.compile(r"(youtube\.com|youtu\.be|twitter\.com|x\.com|pornhub\.com)"),
         processor="process_youtube",
         need_cookie=True
+    ),
+    PlatformHandler(
+        pattern=re.compile(r"(kuaishou\.com)"),
+        processor="process_kuaishou",
     ),
     PlatformHandler(
         pattern=re.compile(r"(.)"),
@@ -350,10 +357,11 @@ class BatchProcessor(BaseProcessor):
                     if current_count >= download_count:
                         break
                     videos = []
-                    for item in feed['photo']['manifestH265']['adaptationSet']:
+                    for item in feed['photo']['manifest']['adaptationSet']:
                         for info in item['representation']:
                             res = f"{info['width']}x{info['height']}"
-                            v = VideoInfo(title=feed['photo']['caption'],download_url=info['url'],size=info['fileSize'],resolution=res)
+                            size = info['fileSize'] if 'fileSize' in info else 0
+                            v = VideoInfo(title=feed['photo']['caption'],download_url=info['url'],size=size,resolution=res)
                             videos.append(v)
                     await self._send_resultx(videos)
                     time.sleep(0.5)
@@ -444,6 +452,21 @@ class SingleProcessor(BaseProcessor):
         #info = VideoInfo(title=api_data['desc'], download_url=api_data['video_data']['nwm_video_url_HQ'])
         await self._send_resultx(videos)
 
+    async def process_kuaishou(self, url: str):
+        ks = KS()
+        cookies = await cookie_manager.get_cookies(self.user_id, self.cookie_type)
+        if cookies:
+            await ks.set_cookie(cookies)
+        video_info = await ks.extract_info(url)
+        if len(video_info) == 0:
+            logger.error("empty video info")
+            return await self.message.reply("下载失败，请检查链接是否正确")
+        videos = []
+        for info in video_info:
+            item = VideoInfo(title=info['caption'],download_url=info['download'][0],resolution=info['resolution'],size=info['size'])
+            videos.append(item)
+        await self._send_resultx(videos)
+
     async def process_common(self, url: str):
         video_info = await parse_video_share_url(url)
         info = VideoInfo(title=video_info.title,download_url=video_info.video_url,resolution="",size=0)
@@ -500,26 +523,30 @@ class SingleProcessor(BaseProcessor):
                 videos = []
                 for fm in info['formats']:
                     if 'video_ext' in fm and fm['video_ext'] != 'none':
-                        v = VideoInfo(title=info['title'],download_url=fm['url'],resolution=fm['resolution'],size=fm['filesize'])
+                        v = VideoInfo(title=info['title'],download_url=fm['url'],resolution=fm.get('resolution','null'),size=fm.get('filesize',0))
                         videos.append(v)
                 await self._send_resultx(videos)
     
 
 # 命令处理器
 @app.on_message(filters.command("single") & filters.private)
+@rate_limiter.rate_limited
 async def handle_single_command(client, message):
     if len(message.command) < 2:
         return await message.reply("用法: /single <视频链接>")
     
     processor = SingleProcessor(message)
     await processor.process(message.command[1])
+    await user_logger.log_action(message.from_user,"command", message.text)
 
 @app.on_message(filters.command("userpost") & filters.private)
+@rate_limiter.rate_limited
 async def handle_multi_command(client, message):
     if len(message.command) < 3:
         return await message.reply("用法： /userpost <主页url> <下载视频数量>")
     processor = BatchProcessor(message)
     await processor.process(message.command[1], int(message.command[2]))
+    await user_logger.log_action(message.from_user,"command",message.text)
 
 @app.on_message(filters.command("setcookie") & filters.private)
 async def handle_set_cookie(client, message):
@@ -531,6 +558,7 @@ async def handle_set_cookie(client, message):
         cookie += msg.text
     await cookie_manager.set_cookies(message.chat.id, cookie, "header")
     await app.send_message(message.chat.id, "设置成功")
+    await user_logger.log_action(message.from_user,"command","setcookie")
 
 @app.on_message(filters.command("setytcookie") & filters.private)
 async def handle_set_ytcookie(client, message):
@@ -557,3 +585,4 @@ async def handle_set_ytcookie(client, message):
             tmp += new_line
     await cookie_manager.set_cookies(message.chat.id, tmp, "netscape")
     await app.send_message(message.chat.id, "设置成功")
+    await user_logger.log_action(message.from_user,"command","setytcookie")

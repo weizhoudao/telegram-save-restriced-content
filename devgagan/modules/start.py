@@ -23,6 +23,8 @@ from pyrogram.raw.functions.bots import SetBotInfo
 from pyrogram.raw.types import InputUserSelf
 
 from pyrogram.types import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
+from devgagan.core.user_log import user_logger
+from devgagan.modules.rate_limiter import rate_limiter
  
 @app.on_message(filters.command("set") & filters.user(OWNER_ID) & filters.private)
 async def set(_, message):
@@ -81,10 +83,12 @@ async def send_or_edit_help_page(_, message, page_number):
         help_pages[page_number]
     )
  
-@app.on_message(filters.command("help"))
+@app.on_message(filters.command("help") & filters.private)
+@rate_limiter.rate_limited
 async def help(client, message):
     join = await subscribe(client, message)
     if join == 1:
         return
  
     await send_or_edit_help_page(client, message, 0)
+    await user_logger.log_action(message.from_user,"command", "help")

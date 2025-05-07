@@ -1,0 +1,20 @@
+author_archive: false
+chunk: 2097152
+cookie: kpf=PC_WEB; clientid=3; did=web_64a589fcb0cc1de7722d5238b9943cc0; didv=1744803767000;
+  userId=2137050384; kuaishou.server.webday7_st=ChprdWFpc2hvdS5zZXJ2ZXIud2ViZGF5Ny5zdBKwAQ3je73J-wJAg8nsyE6JeouVTXnwOcxCTclpObR-lGBdV50dybUGjVt9irI1Up5IiqXz1cfhayf5HZdM71Z55ybWLADSAsJoxbW31IFS80avMIhvQEDTE8MR1R3eVG83nloRs_HfBRNg14YXOXc8igrWCkVeoJCQHeDc9_e_EBUl0V9kRCI_VBW7UsFW7_JL3VnzXbecr11SdcOU8t7G0snheL6k3TFyw8q_JyAJVD82GhLiAcjqdxyK2yTb3QWg1bwhL5siIEbZOXkzdAGM--XgeXiVrbj2Sf_whv1y6JZ6ND4g_bATKAUwAQ;
+  kuaishou.server.webday7_ph=92877d3e44e04e5956d01c047273cd7f38bf; kpn=KUAISHOU_VISION;
+cover: ''
+data_record: false
+folder_mode: false
+folder_name: Download
+mapping_data:
+  作者ID(AuthorID): 作者别名(AuthorAlias)
+max_retry: 5
+max_workers: 4
+music: false
+name_format: 发布日期 作者昵称 作品描述
+proxy: null
+timeout: 10
+user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like
+  Gecko) Chrome/134.0.0.0 Safari/537.36
+work_path: ''
