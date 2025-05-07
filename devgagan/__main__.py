@@ -18,6 +18,7 @@ import gc
 from pyrogram import idle
 from devgagan.modules import ALL_MODULES
 from devgagan.core.mongo.vip_db import check_and_remove_expired_users
+from devgagan.core.user_log import user_logger
 from aiojobs import create_scheduler
 
 # ----------------------------Bot-Start---------------------------- #
@@ -41,6 +42,8 @@ async def devggn_boot():
     print("自动清理过期会员 ...")
     await idle()
     print("正在停止...")
+    await user_logger.flush_buffer()
+    print("正在保存用户操作日志")
 
 
 if __name__ == "__main__":

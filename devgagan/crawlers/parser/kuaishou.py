@@ -12,8 +12,8 @@ class KuaiShou(BaseParser):
     快手
     """
 
-    async def parse_share_url(self, share_url: str) -> VideoInfo:
-        user_agent = fake_useragent.UserAgent(os=["ios"]).random
+    async def parse_share_url(self, share_url: str, cookies: str) -> VideoInfo:
+        user_agent = fake_useragent.UserAgent(os=["Chrome"]).random
 
         # 获取跳转前的信息, 从中获取跳转url, cookie
         async with httpx.AsyncClient(follow_redirects=False) as client:
@@ -21,10 +21,12 @@ class KuaiShou(BaseParser):
                 share_url,
                 headers={
                     "User-Agent": user_agent,
-                    "Referer": "https://v.kuaishou.com/",
+                    "Referer": "https://www.kuaishou.com/",
+                    "Cookie": cookies,
                 },
             )
 
+        """
         location_url = share_response.headers.get("location", "")
         if len(location_url) <= 0:
             raise Exception("failed to get location url from share url")
@@ -38,15 +40,19 @@ class KuaiShou(BaseParser):
                 headers=share_response.headers,
                 cookies=share_response.cookies,
             )
+        """
 
-        re_pattern = r"window.INIT_STATE\s*=\s*(.*?)</script>"
-        re_result = re.search(re_pattern, response.text)
+        #re_pattern = r"window.INIT_STATE\s*=\s*(.*?)</script>"
+        re_pattern = r"window.__APOLLO_STATE__\s*=\s*(.*?)</script>"
+        re_result = re.search(re_pattern, share_response.text)
 
         if not re_result or len(re_result.groups()) < 1:
             raise Exception("failed to parse video JSON info from HTML")
 
         json_text = re_result.group(1).strip()
+        print(json_text)
         json_data = json.loads(json_text)
+        print(json_data)
 
         photo_data = {}
         for json_item in json_data.values():
@@ -91,7 +97,8 @@ class KuaiShou(BaseParser):
             for info in item['representation']:
                 res = f"{info['width']}x{info['height']}"
                 downloadurl = info['url']
-                size = info['fileSize']
+                #size = info['fileSize']
+                size=0
                 r = ResolutionInfo(resolution=res,url=downloadurl,size=size)
                 video_info.res.append(r)
         return video_info

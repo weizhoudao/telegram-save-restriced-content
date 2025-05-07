@@ -60,6 +60,7 @@ tclient = AsyncIOMotorClient(MONGO_DB)
 tdb = tclient["telegram_bot"]  # Your database
 token = tdb["tokens"]  # Your tokens collection
 user_cookies = tdb["user_cookies"]
+user_log = tdb["user_log"] # 记录用户操作日志
 
 async def create_ttl_index():
     """Ensure the TTL index exists for the `tokens` collection."""
@@ -69,12 +70,19 @@ async def create_cookie_index():
     await user_cookies.create_index("user_id")
     await user_cookies.create_index("formats.format")
 
+async def create_user_log_index():
+    await user_log.create_index("timestamp")
+    await user_log.create_index("username")
+    await user_log.create_index([("content", "text")])
+
 # Run the TTL index creation when the bot starts
 async def setup_database():
     await create_ttl_index()
     print("MongoDB TTL index created.")
     await create_cookie_index()
     print("user cookie index created")
+    await create_user_log_index()
+    print("user log index created")
 
 async def restrict_bot():
     global BOT_ID, BOT_NAME, BOT_USERNAME

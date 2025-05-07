@@ -4,6 +4,7 @@ from typing import Optional, Any, Dict
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
+from config import FREE_PER_DAY
 
 class AsyncOperationTracker:
     def __init__(self, mongo_uri: str, db_name: str = "telegram_bot"):
@@ -42,7 +43,7 @@ class AsyncOperationTracker:
         result = await self.collection.find_one({"user_id":user_id,"date":today})
         if result:
             new_count = result.get("count") + 1
-            if new_count > 10:
+            if new_count > FREE_PER_DAY:
                 return False
             await self.collection.update_one({"user_id":user_id,"date":today},{"$set":{"count":new_count}})
             return True

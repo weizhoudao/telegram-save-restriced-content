@@ -16,11 +16,13 @@ from datetime import timedelta
 import pytz
 import datetime, time
 from devgagan import app
+from devgagan.modules.rate_limiter import rate_limiter
 import asyncio
 from config import OWNER_ID
 from devgagan.core.func import get_seconds
 from devgagan.core.mongo import vip_db
 from pyrogram import filters 
+from devgagan.core.user_log import user_logger
 
 @app.on_message(filters.command("del") & filters.user(OWNER_ID))
 async def remove_premium(client, message):
@@ -42,7 +44,7 @@ async def remove_premium(client, message):
         await message.reply_text("ᴜꜱᴀɢᴇ : /del user_id") 
 
 
-@app.on_message(filters.command("myvip"))
+@app.on_message(filters.command("myvip") & filters.private)
 async def myplan(client, message):
     user_id = message.from_user.id
     user = message.from_user.mention
@@ -63,6 +65,8 @@ async def myplan(client, message):
         await message.reply_text(f"⚜️ 会员数据 :\n\n👤 用户名 : {user}\n⚡ ᴜꜱᴇʀ ɪᴅ : {user_id}\n⏰ 会员剩余时长 : {time_left_str}\n⌛️ 过期日期 : {expiry_str_in_ist}")   
     else:
         await message.reply_text(f"ʜᴇʏ {user},\n\n你还没有购买会员哦")
+
+    await user_logger.log_action(message.from_user,"command","myvip")
         
 
 @app.on_message(filters.command("check") & filters.user(OWNER_ID))
@@ -120,7 +124,8 @@ async def give_premium_cmd_handler(client, message):
         await message.reply_text("Usage : /add user_id time (e.g., '1 day for days', '1 hour for hours', or '1 min for minutes', or '1 month for months' or '1 year for year')")
 
 
-@app.on_message(filters.command("transfer"))
+@app.on_message(filters.command("transfer") & filters.private)
+@rate_limiter.rate_limited
 async def transfer_premium(client, message):
     if len(message.command) == 2:
         new_user_id = int(message.command[1])  # The user ID to whom premium is transferred
@@ -169,6 +174,8 @@ async def transfer_premium(client, message):
             await message.reply_text("⚠️ **你还没有购买会员!**\n\n仅会员可以转移权益.")
     else:
         await message.reply_text("⚠️ **用法:** /transfer 新用户id\n")
+
+    await user_logger.log_action(message.from_user, "command", message.text)
 
 
 async def premium_remover():

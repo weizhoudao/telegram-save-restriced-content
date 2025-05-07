@@ -41,7 +41,7 @@ video_source_info_mapping = {
         "parser": HuYa,
     },
     VideoSource.KuaiShou: {
-        "domain_list": ["v.kuaishou.com"],
+        "domain_list": ["v.kuaishou.com","www.kuaishou.com"],
         "parser": KuaiShou,
     },
     VideoSource.LiShiPin: {

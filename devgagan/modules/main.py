@@ -19,16 +19,18 @@ import string
 import asyncio
 from pyrogram import filters, Client
 from devgagan import app, userrbot
-from config import API_ID, API_HASH, FREEMIUM_LIMIT, PREMIUM_LIMIT, OWNER_ID, DEFAULT_SESSION, MONGO_DB
+from config import API_ID, API_HASH, FREEMIUM_LIMIT, PREMIUM_LIMIT, OWNER_ID, DEFAULT_SESSION, MONGO_DB, OPER_INTERNAL
 from devgagan.core.get_func import get_msg
 from devgagan.core.func import *
 from devgagan.core.mongo import db
+from devgagan.core.user_log import user_logger
 from pyrogram.errors import FloodWait
 from datetime import datetime, timedelta
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 import subprocess
 from devgagan.modules.shrink import is_user_verified
 from devgagan.modules.user_operation import AsyncOperationTracker
+from devgagan.modules.rate_limiter import rate_limiter
 
 async def generate_random_name(length=8):
     return ''.join(random.choices(string.ascii_lowercase, k=length))
@@ -66,7 +68,7 @@ async def check_interval(user_id, freecheck):
 
     return True, None
 
-async def set_interval(user_id, interval_minutes=45):
+async def set_interval(user_id, interval_minutes=OPER_INTERNAL):
     now = datetime.now()
     # Set the cooldown interval for the user
     interval_set[user_id] = now + timedelta(seconds=interval_minutes)
@@ -76,6 +78,7 @@ async def set_interval(user_id, interval_minutes=45):
     filters.regex(r'https?://(?:www\.)?t\.me/[^\s]+|tg://openmessage\?user_id=\w+&message_id=\d+')
     & filters.private
 )
+@rate_limiter.rate_limited
 async def single_link(_, message):
     user_id = message.chat.id
 
@@ -127,6 +130,8 @@ async def single_link(_, message):
         except Exception:
             pass
 
+    await user_logger.log_action(message.from_user,"message",message.text)
+
 
 async def initialize_userbot(user_id): # this ensure the single startup .. even if logged in or not
     data = await db.get_data(user_id)
@@ -172,6 +177,7 @@ async def process_special_links(userbot, user_id, msg, link):
     await msg.edit_text("非法链接...")
 
 @app.on_message(filters.command("batch") & filters.private)
+@rate_limiter.rate_limited
 async def batch_link(_, message):
     join = await subscribe(_, message)
     if join == 1:
@@ -293,24 +299,36 @@ async def batch_link(_, message):
     finally:
         users_loop.pop(user_id, None)
 
-@app.on_message(filters.command("cancel"))
+    await user_logger.log_action(message.from_user,"command","batch")
+
+@app.on_message(filters.command("cancel") & filters.private)
 async def stop_batch(_, message):
     user_id = message.chat.id
 
     # Check if there is an active batch process for the user
-    if user_id in users_loop and users_loop[user_id]:
+    if user_id in users_loop:
         users_loop[user_id] = False  # Set the loop status to False
         await app.send_message(
             message.chat.id, 
-            "Batch processing has been stopped successfully. You can start a new batch now if you want."
-        )
-    elif user_id in users_loop and not users_loop[user_id]:
-        await app.send_message(
-            message.chat.id, 
-            "The batch process was already stopped. No active batch to cancel."
+            "批量任务已终止."
         )
     else:
         await app.send_message(
             message.chat.id, 
-            "No active batch processing is running to cancel."
+            "当前没有正在进行中的批量任务."
         )
+
+    async with rate_limiter.lock:
+        if user_id in rate_limiter.active_users:
+            # 从队列中移除
+            new_queue = [t for t in rate_limiter.waiting_queue if t[0] != user_id]
+            rate_limiter.waiting_queue = deque(new_queue)
+
+            # 更新队列位置
+            for idx, (uid, *_ ) in enumerate(rate_limiter.waiting_queue):
+                rate_limiter.queue_positions[uid] = idx + 1
+
+            rate_limiter.queue_positions.pop(user_id, None)
+            rate_limiter.active_users.discard(user_id)
+
+    await user_logger.log_action(message.from_user,"command", "cancel")
