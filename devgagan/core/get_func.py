@@ -26,6 +26,8 @@ from telethon.tl.types import DocumentAttributeVideo, Message
 from telethon.sessions import StringSession
 import pymongo
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+import re
+from urllib.parse import urlparse, parse_qs
 from pyrogram.errors import ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid
 from pyrogram.enums import MessageMediaType, ParseMode
 from devgagan.core.func import *
@@ -33,8 +35,11 @@ from pyrogram.errors import RPCError
 from pyrogram.types import Message
 from config import MONGO_DB as MONGODB_CONNECTION_STRING, LOG_GROUP, OWNER_ID, STRING, API_ID, API_HASH
 from devgagan.core.mongo import db as odb
+from devgagan.core.mongo import vip_db
 from telethon import TelegramClient, events, Button
+from devgagan.modules.shrink import is_user_verified
 from devgagantools import fast_upload
+import logging
 
 def thumbnail(sender):
     return f'{sender}.jpg' if os.path.exists(f'{sender}.jpg') else None
@@ -52,10 +57,10 @@ collection = db[COLLECTION_NAME]
 
 if STRING:
     from devgagan import pro
-    print("App imported from devgagan.")
+    logging.info("App imported from devgagan.")
 else:
     pro = None
-    print("STRING is not available. 'app' is set to None.")
+    logging.info("STRING is not available. 'app' is set to None.")
     
 async def fetch_upload_method(user_id):
     """Fetch the user's preferred upload method."""
@@ -75,7 +80,84 @@ async def format_caption_to_html(caption: str) -> str:
     caption = re.sub(r"\[(.*?)\]\((.*?)\)", r'<a href="\2">\1</a>', caption)
     return caption.strip() if caption else None
     
+def extract_message_info(url):
+    parsed = urlparse(url)
+    path = parsed.path
 
+    group_id = None
+    message_id = None
+    reply_id = None
+    reply_id_from_path = None
+
+    # 匹配频道或私有群组路径（例如：/c/12345/678/901）
+    channel_pattern = re.compile(r'^/c/(\d+)/(\d+)(?:/(\d+))?')
+    # 匹配公开群组或频道路径（例如：/group_name/123/456）
+    group_pattern = re.compile(r'^/([a-zA-Z0-9_]+)/(\d+)(?:/(\d+))?')
+
+    # 尝试匹配频道模式
+    channel_match = channel_pattern.match(path)
+    if channel_match:
+        group_id = channel_match.group(1)
+        message_id = channel_match.group(2)
+        reply_id_from_path = channel_match.group(3)
+    else:
+        # 尝试匹配公开群组模式
+        group_match = group_pattern.match(path)
+        if group_match:
+            group_id = group_match.group(1)
+            message_id = group_match.group(2)
+            reply_id_from_path = group_match.group(3)
+
+    # 确定回复ID：优先路径中的回复ID，其次查询参数中的thread/comment，最后检查旧reply参数
+    reply_id = reply_id_from_path
+    if not reply_id:
+        # 解析查询参数中的thread或comment
+        query_params = parse_qs(parsed.query)
+        thread_query = query_params.get('thread', [])
+        comment_query = query_params.get('comment', [])
+        old_reply_query = query_params.get('reply', [])  # 兼容旧版本
+
+        # 优先级：thread > comment > reply
+        if thread_query:
+            reply_id = thread_query[0]
+        elif comment_query:
+            reply_id = comment_query[0]
+        elif old_reply_query:
+            reply_id = old_reply_query[0]
+        else:
+            # 解析fragment中的thread或comment
+            fragment_params = parse_qs(parsed.fragment)
+            thread_fragment = fragment_params.get('thread', [])
+            comment_fragment = fragment_params.get('comment', [])
+            old_reply_fragment = fragment_params.get('reply', [])  # 兼容旧版本
+
+            if thread_fragment:
+                reply_id = thread_fragment[0]
+            elif comment_fragment:
+                reply_id = comment_fragment[0]
+            elif old_reply_fragment:
+                reply_id = old_reply_fragment[0]
+
+    # 转换为整数（若可能）
+    try:
+        message_id = int(message_id) if message_id else None
+    except ValueError:
+        logging.error(f"消息id转换失败:{message_id}")
+        message_id = None
+
+    if reply_id:
+        try:
+            reply_id = int(reply_id)
+        except ValueError:
+            logging.error(f"评论id转换失败:{reply_id}")
+            reply_id = None  # 无效的回复ID格式
+
+    logging.info(f"url:{url},groupid:{group_id},message_id:{message_id},reply_id:{reply_id}")
+    return {
+        'group_id': group_id,
+        'message_id': message_id,
+        'reply_id': reply_id
+    }
 
 async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
     try:
@@ -174,7 +256,7 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
 
     except Exception as e:
         await app.send_message(LOG_GROUP, f"**Upload Failed:** {str(e)}")
-        print(f"Error during media upload: {e}")
+        logging.error(f"Error during media upload: {e}")
 
     finally:
         if thumb_path and os.path.exists(thumb_path):
@@ -186,13 +268,14 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
     try:
         # Sanitize the message link
         msg_link = msg_link.split("?single")[0]
-        chat, msg_id = None, None
+        chat, msg_id, reply_id = None, None, None
         saved_channel_ids = load_saved_channel_ids()
-        size_limit = 2 * 1024 * 1024 * 1024  # 1.99 GB size limit
+        size_limit = 1024 * 1024 * 1024  # 1.99 GB size limit
         file = ''
         edit = ''
         # Extract chat and message ID for valid Telegram links
         if 't.me/c/' in msg_link or 't.me/b/' in msg_link:
+            '''
             parts = msg_link.split("/")
             if 't.me/b/' in msg_link:
                 chat = parts[-2]
@@ -200,11 +283,19 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
             else:
                 chat = int('-100' + parts[parts.index('c') + 1])
                 msg_id = int(parts[-1]) + i
+            '''
+            msg_info = extract_message_info(msg_link)
+            chat = msg_info.get('group_id')
+            msg_id = msg_info.get('message_id') + i
+            reply_id = msg_info.get('reply_id')
+            if 't.me/b/' not in msg_link:
+                chat = int('-100' + chat)
+            logging.info(f"chat:{chat},msg_id:{msg_id}")
 
             if chat in saved_channel_ids:
                 await app.edit_message_text(
                     message.chat.id, edit_id,
-                    "Sorry! This channel is protected by **__Team SPY__**."
+                    "此频道受下载助手保护不允许下载."
                 )
                 return
             
@@ -226,9 +317,15 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
         
         else:
             edit = await app.edit_message_text(sender, edit_id, "Public link detected...")
+            '''
             chat = msg_link.split("t.me/")[1].split("/")[0]
             msg_id = int(msg_link.split("/")[-1])
-            await copy_message_with_chat_id(app, userbot, sender, chat, msg_id, edit)
+            '''
+            msg_info = extract_message_info(msg_link)
+            chat = msg_info.get('group_id')
+            msg_id = msg_info.get('message_id')
+            reply_id = msg_info.get('reply_id')
+            await copy_message_with_chat_id(app, userbot, sender, chat, msg_id, reply_id, edit)
             await edit.delete(2)
             return
             
@@ -256,15 +353,18 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
             await handle_sticker(app, msg, target_chat_id, topic_id, edit_id, LOG_GROUP)
             return
 
-        #await app.edit_message_text(sender, edit_id, "出于带宽成本考虑, 暂不支持此类型消息下载. 如有需求下载此类消息请联系客服.")
-        #return
-        
+        is_buy_user = False
+        vip = await vip_db.check_vip(sender)
+        if vip and vip.get("user_id") and vip.get("user_id") == sender:
+            is_buy_user = True
+        if not is_buy_user:
+            if await is_user_verified(sender):
+                is_buy_user = True
+        if not is_buy_user:
+            return await message.reply("此类消息需要消耗大量带宽资源,仅限会员操作.请购买会员或者使用/tryvip试用")
+
         # Handle file media (photo, document, video)
         file_size = get_message_file_size(msg)
-
-        # if file_size and file_size > size_limit and pro is None:
-        #     await app.edit_message_text(sender, edit_id, "**❌ 4GB Uploader not found**")
-        #     return
 
         file_name = await get_media_filename(msg)
         edit = await app.edit_message_text(sender, edit_id, "**Downloading...**")
@@ -322,10 +422,10 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
             await upload_media(sender, target_chat_id, file, caption, edit, topic_id)
 
     except (ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid):
-        await app.edit_message_text(sender, edit_id, "Have you joined the channel?")
+        await app.edit_message_text(sender, edit_id, "你是不是还没加入群里或者频道?")
     except Exception as e:
-        # await app.edit_message_text(sender, edit_id, f"Failed to save: `{msg_link}`\n\nError: {str(e)}")
-        print(f"Error: {e}")
+        await app.edit_message_text(sender, edit_id, f"保存失败: `{msg_link}`\n\nError: {str(e)}")
+        logging.error(f"Error: {e}")
     finally:
         # Clean up
         if file and os.path.exists(file):
@@ -399,7 +499,7 @@ async def download_user_stories(userbot, chat_id, msg_id, edit, sender):
             return
         await edit.edit("Downloading Story...")
         file_path = await userbot.download_media(story)
-        print(f"Story downloaded: {file_path}")
+        logging.info(f"Story downloaded: {file_path}")
         # Send the downloaded story based on its type
         if story.media:
             await edit.edit("Uploading Story...")
@@ -413,17 +513,17 @@ async def download_user_stories(userbot, chat_id, msg_id, edit, sender):
             os.remove(file_path)  
         await edit.edit("Story processed successfully.")
     except RPCError as e:
-        print(f"Failed to fetch story: {e}")
+        logging.error(f"Failed to fetch story: {e}")
         await edit.edit(f"Error: {e}")
         
-async def copy_message_with_chat_id(app, userbot, sender, chat_id, message_id, edit):
+async def copy_message_with_chat_id(app, userbot, sender, chat_id, message_id, reply_id, edit):
     target_chat_id = user_chat_ids.get(sender, sender)
     file = None
     result = None
     size_limit = 2 * 1024 * 1024 * 1024  # 2 GB size limit
 
     try:
-        msg = await app.get_messages(chat_id, message_id)
+        msg = await app.get_messages(chat_id, message_id, reply_id)
         custom_caption = get_user_caption_preference(sender)
         final_caption = format_caption(msg.caption or '', sender, custom_caption)
 
@@ -446,7 +546,7 @@ async def copy_message_with_chat_id(app, userbot, sender, chat_id, message_id, e
             try:
                 await userbot.join_chat(chat_id)
             except Exception as e:
-                print(e)
+                logging.info(e)
                 pass
             chat_id = (await userbot.get_chat(f"@{chat_id}")).id
             msg = await userbot.get_messages(chat_id, message_id)
@@ -489,7 +589,7 @@ async def copy_message_with_chat_id(app, userbot, sender, chat_id, message_id, e
                 await edit.edit("Unsupported media type.")
 
     except Exception as e:
-        print(f"Error : {e}")
+        logging.error(f"Error : {e}")
         pass
         #error_message = f"Error occurred while processing message: {str(e)}"
         # await app.send_message(sender, error_message)
@@ -509,7 +609,7 @@ async def send_media_message(app, target_chat_id, msg, caption, topic_id):
         if msg.photo:
             return await app.send_photo(target_chat_id, msg.photo.file_id, caption=caption, reply_to_message_id=topic_id)
     except Exception as e:
-        print(f"Error while sending media: {e}")
+        logging.error(f"Error while sending media: {e}")
     
     # Fallback to copy_message in case of any exceptions
     return await app.copy_message(target_chat_id, msg.chat.id, msg.id, reply_to_message_id=topic_id)
@@ -539,7 +639,7 @@ def load_user_data(user_id, key, default_value=None):
         user_data = collection.find_one({"_id": user_id})
         return user_data.get(key, default_value) if user_data else default_value
     except Exception as e:
-        print(f"Error loading {key}: {e}")
+        logging.error(f"Error loading {key}: {e}")
         return default_value
 
 def load_saved_channel_ids():
@@ -549,7 +649,7 @@ def load_saved_channel_ids():
         for channel_doc in collection.find({"channel_id": {"$exists": True}}):
             saved_channel_ids.add(channel_doc["channel_id"])
     except Exception as e:
-        print(f"Error loading saved channel IDs: {e}")
+        logging.error(f"Error loading saved channel IDs: {e}")
     return saved_channel_ids
 
 def save_user_data(user_id, key, value):
@@ -560,7 +660,7 @@ def save_user_data(user_id, key, value):
             upsert=True
         )
     except Exception as e:
-        print(f"Error saving {key}: {e}")
+        logging.error(f"Error saving {key}: {e}")
 
 
 # Delete and replacement word functions
@@ -845,7 +945,7 @@ async def handle_large_file(file, sender, edit, caption):
     
     dm = None
     
-    print("4GB connector found.")
+    logging.info("4GB connector found.")
     await edit.edit('**__ ✅ 4GB trigger connected...__**\n\n')
     
     target_chat_id = user_chat_ids.get(sender, sender)
@@ -915,7 +1015,7 @@ async def handle_large_file(file, sender, edit, caption):
             )
             
     except Exception as e:
-        print(f"Error while sending file: {e}")
+        logging.error(f"Error while sending file: {e}")
 
     finally:
         await edit.delete()
@@ -967,10 +1067,10 @@ async def is_file_size_exceeding(file_path, size_limit):
     try:
         return os.path.getsize(file_path) > size_limit
     except FileNotFoundError:
-        print(f"File not found: {file_path}")
+        logging.error(f"File not found: {file_path}")
         return False
     except Exception as e:
-        print(f"Error while checking file size: {e}")
+        logging.error(f"Error while checking file size: {e}")
         return False
 
 

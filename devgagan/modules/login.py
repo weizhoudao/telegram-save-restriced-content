@@ -74,7 +74,7 @@ async def clear_db(client, message):
         
     
 @app.on_message(filters.command("login") & filters.private)
-@rate_limiter.rate_limited
+#@rate_limiter.rate_limited
 async def generate_session(_, message):
     joined = await subscribe(_, message)
     if joined == 1:

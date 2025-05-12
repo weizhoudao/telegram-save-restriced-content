@@ -78,7 +78,7 @@ async def reset_user_quota_handler(client, message):
         await message.reply("重置成功")
  
 @app.on_message(filters.command("start") & filters.private)
-@rate_limiter.rate_limited
+#@rate_limiter.rate_limited
 async def token_handler(client, message):
     """Handle the /token command."""
     join = await subscribe(client, message)
@@ -107,7 +107,7 @@ async def token_handler(client, message):
     await user_logger.log_action(message.from_user,"command",message.text)
 
 @app.on_message(filters.command("tryvip") & filters.private)
-@rate_limiter.rate_limited
+#@rate_limiter.rate_limited
 async def smart_handler(client, message):
     user_id = message.chat.id
      

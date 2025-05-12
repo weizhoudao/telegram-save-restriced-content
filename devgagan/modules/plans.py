@@ -125,7 +125,7 @@ async def give_premium_cmd_handler(client, message):
 
 
 @app.on_message(filters.command("transfer") & filters.private)
-@rate_limiter.rate_limited
+#@rate_limiter.rate_limited
 async def transfer_premium(client, message):
     if len(message.command) == 2:
         new_user_id = int(message.command[1])  # The user ID to whom premium is transferred
