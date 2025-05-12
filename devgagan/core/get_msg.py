@@ -1,18 +1,3 @@
-# ---------------------------------------------------
-# File Name: get_func.py
-# Description: A Pyrogram bot for downloading files from Telegram channels or groups 
-#              and uploading them back to Telegram.
-# Author: Gagan
-# GitHub: https://github.com/devgaganin/
-# Telegram: https://t.me/team_spy_pro
-# YouTube: https://youtube.com/@dev_gagan
-# Created: 2025-01-11
-# Last Modified: 2025-02-01
-# Version: 2.0.5
-# License: MIT License
-# Improved logic handles
-# ---------------------------------------------------
-
 import asyncio
 import time
 import gc
@@ -36,6 +21,7 @@ from pyrogram.types import Message
 from config import MONGO_DB as MONGODB_CONNECTION_STRING, LOG_GROUP, OWNER_ID, STRING, API_ID, API_HASH
 from devgagan.core.mongo import db as odb
 from devgagan.core.mongo import vip_db
+from devgagan.core.mongo import users_db 
 from telethon import TelegramClient, events, Button
 from devgagan.modules.shrink import is_user_verified
 from devgagantools import fast_upload
@@ -81,6 +67,7 @@ async def format_caption_to_html(caption: str) -> str:
     return caption.strip() if caption else None
     
 def extract_message_info(url):
+    logging.info(f"69url:{url}")
     parsed = urlparse(url)
     path = parsed.path
 
@@ -264,33 +251,212 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
         gc.collect()
 
 
+async def get_reply(userbot, msg, sender, edit_id, message):
+    if msg.service or msg.empty:
+        logging.error(f"skip invalid msg:{msg}")
+        return
+
+    logging.info(f"msg:{msg}")
+    target_chat_id = user_chat_ids.get(message.chat.id, message.chat.id)
+    topic_id = None
+    if '/' in str(target_chat_id):
+        target_chat_id, topic_id = map(int, target_chat_id.split('/', 1))
+
+    # Handle different message types
+    if msg.media == MessageMediaType.WEB_PAGE_PREVIEW:
+        await clone_message(app, msg, target_chat_id, topic_id, edit_id, LOG_GROUP)
+        return
+
+    if msg.text:
+        await clone_text_message(app, msg, target_chat_id, topic_id, edit_id, LOG_GROUP)
+        return
+
+    if msg.sticker:
+        await handle_sticker(app, msg, target_chat_id, topic_id, edit_id, LOG_GROUP)
+        return
+
+    is_buy_user = False
+    vip = await vip_db.check_vip(sender)
+    if vip and vip.get("user_id") and vip.get("user_id") == sender:
+        is_buy_user = True
+    if not is_buy_user:
+        if await is_user_verified(sender):
+            is_buy_user = True
+    if not is_buy_user:
+        return await message.reply("此类消息需要消耗大量带宽资源,仅限会员操作.请购买会员或者使用/tryvip试用")
+
+    # Handle file media (photo, document, video)
+    file_size = get_message_file_size(msg)
+
+    file_name = await get_media_filename(msg)
+    edit = await app.edit_message_text(sender, edit_id, "**开始下载**")
+
+    # Download media
+    file = await userbot.download_media(
+        msg,
+        file_name=file_name,
+        progress=progress_bar,
+        progress_args=("╭─────────────────────╮\n│      **__Downloading__...**\n├─────────────────────", edit, time.time())
+    )
+    
+    caption = await get_final_caption(msg, sender)
+    logging.info(f"caption:{caption}")
+
+    # Rename file
+    file = await rename_file(file, sender)
+    if msg.audio:
+        result = await app.send_audio(target_chat_id, file, caption=caption, reply_to_message_id=topic_id)
+        await result.copy(LOG_GROUP)
+        os.remove(file)
+        return
+    
+    if msg.voice:
+        result = await app.send_voice(target_chat_id, file, reply_to_message_id=topic_id)
+        await result.copy(LOG_GROUP)
+        os.remove(file)
+        return
+
+    if msg.video_note:
+        result = await app.send_video_note(target_chat_id, file, reply_to_message_id=topic_id)
+        await result.copy(LOG_GROUP)
+        os.remove(file)
+        return
+
+    if msg.photo:
+        result = await app.send_photo(target_chat_id, file, caption=caption, reply_to_message_id=topic_id)
+        await result.copy(LOG_GROUP)
+        os.remove(file)
+        return
+
+    # await edit.edit("**Checking file...**")
+    if file_size > size_limit and (free_check == 1 or pro is None):
+        await edit.delete()
+        await split_and_upload_file(app, sender, target_chat_id, file, caption, topic_id)
+        return
+    elif file_size > size_limit:
+        await handle_large_file(file, sender, edit, caption)
+    else:
+        await upload_media(sender, target_chat_id, file, caption, edit, topic_id)
+
+async def get_replies(userbot, user_id, edit_id, start_url, group_id, message_id, reply_id, download_count, message):
+    logging.info("get replies")
+    try:
+        async for m in userbot.get_discussion_replies(group_id, message_id):
+            logging.info(f"m:{m}")
+            if m.id >= reply_id and m.id < reply_id + download_count:
+                await get_reply(userbot, m, user_id, edit_id, message)
+        await app.send_message(user_id, edit_id, "下载完成!")
+    except (ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid):
+        await app.edit_message_text(user_id, edit_id, "你是不是还没加入群里或者频道?")
+    except Exception as e:
+        await app.edit_message_text(user_id, edit_id, f"保存失败: `{start_url}`\n\nError: {str(e)}")
+        logging.error(f"Error: {e}")
+    finally:
+        await app.delete_messages(user_id, edit_id)
+
+async def forward_message(client, message, target_chat):
+    # 确定解析模式
+    parse_mode = enums.ParseMode.DEFAULT
+    if message.entities:
+        parse_mode = enums.ParseMode.HTML if message.text_markdown else enums.ParseMode.MARKDOWN
+
+    # 公共参数
+    common_args = {
+        "chat_id": target_chat,
+        "reply_markup": message.reply_markup
+    }
+
+    try:
+        # 处理文本消息
+        if message.text:
+            await client.send_message(
+                text=message.text.html if parse_mode == enums.ParseMode.HTML else message.text.markdown,
+                parse_mode=parse_mode,
+                **common_args
+            )
+
+        # 处理带媒体的消息
+        elif message.media:
+            media_args = {
+                "parse_mode": parse_mode,
+                **common_args
+            }
+
+            if message.photo:
+                await client.send_photo(
+                    photo=message.photo.file_id,
+                    **media_args
+                )
+            elif message.video:
+                await client.send_video(
+                    video=message.video.file_id,
+                    duration=message.video.duration,
+                    width=message.video.width,
+                    height=message.video.height,
+                    **media_args
+                )
+            elif message.document:
+                await client.send_document(
+                    document=message.document.file_id,
+                    file_name=message.document.file_name,
+                    **media_args
+                )
+            elif message.audio:
+                await client.send_audio(
+                    audio=message.audio.file_id,
+                    duration=message.audio.duration,
+                    performer=message.audio.performer,
+                    title=message.audio.title,
+                    **media_args
+                )
+            elif message.voice:
+                await client.send_voice(
+                    voice=message.voice.file_id,
+                    **media_args
+                )
+            elif message.sticker:
+                await client.send_sticker(
+                    sticker=message.sticker.file_id,
+                    **common_args
+                )
+
+        # 处理位置信息
+        elif message.location:
+            await client.send_location(
+                latitude=message.location.latitude,
+                longitude=message.location.longitude,
+                **common_args
+            )
+
+        # 处理轮播消息组中的消息
+        if message.media_group_id:
+            # 这里需要额外处理媒体组逻辑
+            pass
+
+    except Exception as e:
+        print(f"复制消息失败: {e}")
+        raise
+
 async def get_msg(userbot, sender, edit_id, msg_link, i, message):
     try:
         # Sanitize the message link
-        msg_link = msg_link.split("?single")[0]
+        #msg_link = msg_link.split("?single")[0]
         chat, msg_id, reply_id = None, None, None
         saved_channel_ids = load_saved_channel_ids()
         size_limit = 1024 * 1024 * 1024  # 1.99 GB size limit
         file = ''
         edit = ''
         # Extract chat and message ID for valid Telegram links
+        is_public = False
         if 't.me/c/' in msg_link or 't.me/b/' in msg_link:
-            '''
-            parts = msg_link.split("/")
-            if 't.me/b/' in msg_link:
-                chat = parts[-2]
-                msg_id = int(parts[-1]) + i # fixed bot problem 
-            else:
-                chat = int('-100' + parts[parts.index('c') + 1])
-                msg_id = int(parts[-1]) + i
-            '''
             msg_info = extract_message_info(msg_link)
             chat = msg_info.get('group_id')
             msg_id = msg_info.get('message_id') + i
             reply_id = msg_info.get('reply_id')
-            if 't.me/b/' not in msg_link:
+            if chat.isdigit():
                 chat = int('-100' + chat)
-            logging.info(f"chat:{chat},msg_id:{msg_id}")
+
+            logging.info(f"chat:{chat},msg_id:{msg_id},reply_id:{reply_id}")
 
             if chat in saved_channel_ids:
                 await app.edit_message_text(
@@ -317,23 +483,36 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
         
         else:
             edit = await app.edit_message_text(sender, edit_id, "Public link detected...")
-            '''
-            chat = msg_link.split("t.me/")[1].split("/")[0]
-            msg_id = int(msg_link.split("/")[-1])
-            '''
             msg_info = extract_message_info(msg_link)
             chat = msg_info.get('group_id')
             msg_id = msg_info.get('message_id')
             reply_id = msg_info.get('reply_id')
-            await copy_message_with_chat_id(app, userbot, sender, chat, msg_id, reply_id, edit)
-            await edit.delete(2)
-            return
+            # https://t.me/channelid/topicid/msgid
+            if len(msg_link.split('/')) == 6:
+                msg_id = reply_id
+                reply_id = None
+            if reply_id is None:
+                await copy_message_with_chat_id(app, userbot, sender, chat, msg_id, edit)
+                await edit.delete(2)
+                return
+            else:
+                is_public = True
+                logging.info(f"try oper by user:{chat},{msg_id},{reply_id}")
             
         # Fetch the target message
-        msg = await userbot.get_messages(chat, msg_id)
+        logging.info("before")
+        msg = None
+        if is_public:
+            async for m in userbot.get_discussion_replies(chat, msg_id):
+                if m.id == reply_id:
+                    msg = m
+                    break
+        else:
+            msg = await userbot.get_messages(chat, msg_id)
         if msg.service or msg.empty:
             await app.delete_messages(sender, edit_id)
             return
+        logging.info(f"msg:{msg}")
 
         target_chat_id = user_chat_ids.get(message.chat.id, message.chat.id)
         topic_id = None
@@ -363,6 +542,16 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
         if not is_buy_user:
             return await message.reply("此类消息需要消耗大量带宽资源,仅限会员操作.请购买会员或者使用/tryvip试用")
 
+        if False: 
+            channel_id = await users_db.get_channel_id(sender)
+            logging.info(f"channel_id:{channel_id}")
+            if channel_id is None:
+                channel = await userbot.create_channel("下载神器保存频道", "Channel Description")
+                channel_id = channel.id
+                await users_db.set_channel_id(sender, channel_id)
+            return await forward_message(userbot, msg, channel_id)
+
+
         # Handle file media (photo, document, video)
         file_size = get_message_file_size(msg)
 
@@ -378,6 +567,7 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
         )
         
         caption = await get_final_caption(msg, sender)
+        logging.info(f"caption:{caption}")
 
         # Rename file
         file = await rename_file(file, sender)
@@ -404,7 +594,9 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
             return
 
         if msg.photo:
+            logging.info(f"start to send...:{target_chat_id},message:{message}")
             result = await app.send_photo(target_chat_id, file, caption=caption, reply_to_message_id=topic_id)
+            logging.info(f"result:{result}")
             await result.copy(LOG_GROUP)
             await edit.delete(2)
             os.remove(file)
@@ -432,7 +624,95 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
             os.remove(file)
         if edit:
             await edit.delete(2)
-        
+
+async def copy_message_to_target_chat(userbot, msg, target_chat_id, edit_id, message):
+    if msg.service or msg.empty:
+        logging.info(f"skip service or empty msg:{msg}")
+        return
+
+    sender = message.chat.id
+
+    topic_id = None
+    try:
+        if msg.media == MessageMediaType.WEB_PAGE_PREVIEW:
+            await clone_message(app, msg, target_chat_id, topic_id, edit_id, LOG_GROUP)
+            return
+
+        if msg.text:
+            await clone_text_message(app, msg, target_chat_id, topic_id, edit_id, LOG_GROUP)
+            return
+
+        if msg.sticker:
+            await handle_sticker(app, msg, target_chat_id, topic_id, edit_id, LOG_GROUP)
+            return
+
+        size_limit = 1024 * 1024 * 1024 * 1.5
+        file_size = get_message_file_size(msg)
+        if file_size > size_limit: #允许下载超过2GB的
+            return await message.reply("目前暂不支持下载超过2GB的视频,忽略了一条消息.")
+        file_name = await get_media_filename(msg)
+        edit = await app.edit_message_text(sender, edit_id, "**开始下载...**")
+
+        file = await userbot.download_media(
+            msg,
+            file_name=file_name,
+            progress=progress_bar,
+            progress_args=("╭─────────────────────╮\n│      **__下载中__...**\n├─────────────────────", edit, time.time())
+            )
+
+        caption = await get_final_caption(msg, sender)
+        logging.info(f"caption:{caption}")
+
+        file = await rename_file(file, sender)
+        if msg.audio:
+            result = await app.send_audio(target_chat_id, file, caption=caption, reply_to_message_id=topic_id)
+            await result.copy(LOG_GROUP)
+            await edit.delete(2)
+            os.remove(file)
+            return
+
+        if msg.voice:
+            result = await app.send_voice(target_chat_id, file, reply_to_message_id=topic_id)
+            await result.copy(LOG_GROUP)
+            await edit.delete(2)
+            os.remove(file)
+            return
+
+
+        if msg.video_note:
+            result = await app.send_video_note(target_chat_id, file, reply_to_message_id=topic_id)
+            await result.copy(LOG_GROUP)
+            await edit.delete(2)
+            os.remove(file)
+            return
+
+        if msg.photo:
+            result = await app.send_photo(target_chat_id, file, caption=caption, reply_to_message_id=topic_id)
+            await result.copy(LOG_GROUP)
+            await edit.delete(2)
+            os.remove(file)
+            return
+
+        if file_size > size_limit and (free_check == 1 or pro is None):
+            await edit.delete()
+            await split_and_upload_file(app, sender, target_chat_id, file, caption, topic_id)
+            return
+        elif file_size > size_limit:
+            await handle_large_file(file, sender, edit, caption)
+        else:
+            await upload_media(sender, target_chat_id, file, caption, edit, topic_id)
+
+    except (ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid):
+        await app.edit_message_text(sender, edit_id, "你是不是还没加入群里或者频道?")
+    except Exception as e:
+        await app.edit_message_text(sender, edit_id, f"保存失败: `{msg}`\n\nError: {str(e)}")
+        logging.error(f"Error: {e}")
+    finally:
+        if file and os.path.exists(file):
+            os.remove(file)
+        if edit:
+            await edit.delete(2)
+
 async def clone_message(app, msg, target_chat_id, topic_id, edit_id, log_group):
     edit = await app.edit_message_text(target_chat_id, edit_id, "Cloning...")
     devgaganin = await app.send_message(target_chat_id, msg.text.markdown, reply_to_message_id=topic_id)
@@ -516,14 +796,14 @@ async def download_user_stories(userbot, chat_id, msg_id, edit, sender):
         logging.error(f"Failed to fetch story: {e}")
         await edit.edit(f"Error: {e}")
         
-async def copy_message_with_chat_id(app, userbot, sender, chat_id, message_id, reply_id, edit):
+async def copy_message_with_chat_id(app, userbot, sender, chat_id, message_id, edit):
     target_chat_id = user_chat_ids.get(sender, sender)
     file = None
     result = None
-    size_limit = 2 * 1024 * 1024 * 1024  # 2 GB size limit
+    size_limit = 1024 * 1024 * 1024  # 1 GB size limit
 
     try:
-        msg = await app.get_messages(chat_id, message_id, reply_id)
+        msg = await app.get_messages(chat_id, message_id)
         custom_caption = get_user_caption_preference(sender)
         final_caption = format_caption(msg.caption or '', sender, custom_caption)
 

@@ -14,13 +14,14 @@
 # ---------------------------------------------------
 
 import time
+import psutil
 import random
 import string
 import asyncio
 from pyrogram import filters, Client
 from devgagan import app, userrbot
 from config import API_ID, API_HASH, FREEMIUM_LIMIT, PREMIUM_LIMIT, OWNER_ID, DEFAULT_SESSION, MONGO_DB, OPER_INTERNAL
-from devgagan.core.get_func import get_msg
+from devgagan.core.get_msg import get_msg
 from devgagan.core.func import *
 from devgagan.core.mongo import db
 from devgagan.core.user_log import user_logger
@@ -31,6 +32,7 @@ import subprocess
 from devgagan.modules.shrink import is_user_verified
 from devgagan.modules.user_operation import AsyncOperationTracker
 from devgagan.modules.rate_limiter import rate_limiter
+import logging
 
 async def generate_random_name(length=8):
     return ''.join(random.choices(string.ascii_lowercase, k=length))
@@ -77,10 +79,16 @@ async def set_interval(user_id, interval_minutes=OPER_INTERNAL):
 @app.on_message(
     filters.regex(r'https?://(?:www\.)?t\.me/[^\s]+|tg://openmessage\?user_id=\w+&message_id=\d+')
     & filters.private
+    & ~filters.command("get_reply")
 )
-@rate_limiter.rate_limited
+#@rate_limiter.rate_limited
 async def single_link(_, message):
     user_id = message.chat.id
+
+    usage = psutil.virtual_memory().percent
+    logging.info(f"link:{message.text}, usage:{usage}")
+    if usage >= 80:
+        return await message.reply("当前服务器负载过高,请稍后再试")
 
     # Check subscription and batch mode
     if await subscribe(_, message) == 1 or user_id in batch_mode:
@@ -317,18 +325,5 @@ async def stop_batch(_, message):
             message.chat.id, 
             "当前没有正在进行中的批量任务."
         )
-
-    async with rate_limiter.lock:
-        if user_id in rate_limiter.active_users:
-            # 从队列中移除
-            new_queue = [t for t in rate_limiter.waiting_queue if t[0] != user_id]
-            rate_limiter.waiting_queue = deque(new_queue)
-
-            # 更新队列位置
-            for idx, (uid, *_ ) in enumerate(rate_limiter.waiting_queue):
-                rate_limiter.queue_positions[uid] = idx + 1
-
-            rate_limiter.queue_positions.pop(user_id, None)
-            rate_limiter.active_users.discard(user_id)
 
     await user_logger.log_action(message.from_user,"command", "cancel")

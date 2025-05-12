@@ -511,7 +511,7 @@ class SingleProcessor(BaseProcessor):
             ydl_opts = {
                 'outtmpl': f"{get_random_string()}.%(ext)s",
                 #'format': 'best',
-                 'format': 'bestvideo+bestaudio',
+                 'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
                 'cookiefile': tmp_file.name if cookies else None,
                 'writethumbnail': True,
                 'verbose': True
@@ -530,7 +530,7 @@ class SingleProcessor(BaseProcessor):
 
 # 命令处理器
 @app.on_message(filters.command("single") & filters.private)
-@rate_limiter.rate_limited
+#@rate_limiter.rate_limited
 async def handle_single_command(client, message):
     if len(message.command) < 2:
         return await message.reply("用法: /single <视频链接>")
@@ -540,7 +540,7 @@ async def handle_single_command(client, message):
     await user_logger.log_action(message.from_user,"command", message.text)
 
 @app.on_message(filters.command("userpost") & filters.private)
-@rate_limiter.rate_limited
+#@rate_limiter.rate_limited
 async def handle_multi_command(client, message):
     if len(message.command) < 3:
         return await message.reply("用法： /userpost <主页url> <下载视频数量>")
