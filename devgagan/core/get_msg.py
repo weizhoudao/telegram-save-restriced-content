@@ -646,8 +646,9 @@ async def copy_message_to_target_chat(userbot, msg, target_chat_id, edit_id, mes
             await handle_sticker(app, msg, target_chat_id, topic_id, edit_id, LOG_GROUP)
             return
 
+        size_limit = 1024 * 1024 * 1024 * 1.5
         file_size = get_message_file_size(msg)
-        if file_size > 1024 * 1024 * 1024 *2: #允许下载超过2GB的
+        if file_size > size_limit: #允许下载超过2GB的
             return await message.reply("目前暂不支持下载超过2GB的视频,忽略了一条消息.")
         file_name = await get_media_filename(msg)
         edit = await app.edit_message_text(sender, edit_id, "**开始下载...**")
@@ -704,7 +705,7 @@ async def copy_message_to_target_chat(userbot, msg, target_chat_id, edit_id, mes
     except (ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid):
         await app.edit_message_text(sender, edit_id, "你是不是还没加入群里或者频道?")
     except Exception as e:
-        await app.edit_message_text(sender, edit_id, f"保存失败: `{msg_link}`\n\nError: {str(e)}")
+        await app.edit_message_text(sender, edit_id, f"保存失败: `{msg}`\n\nError: {str(e)}")
         logging.error(f"Error: {e}")
     finally:
         if file and os.path.exists(file):

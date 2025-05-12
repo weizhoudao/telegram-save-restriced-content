@@ -113,20 +113,9 @@ async def handle_get_reply(client, message):
     if chat_id.isdigit():
         chat_id = int('-100' + chat_id)
 
-    channel_id = await users_db.get_channel_id(user_id)
-    logging.info(f"channel_id:{channel_id}")
-    if channel_id is None:
-        channel = await userbot.create_channel("下载神器保存频道", "Channel Description")
-        channel_id = channel.id
-        await users_db.set_channel_id(user_id, channel_id)
-
     replies = []
     async for m in userbot.get_discussion_replies(chat_id, message_id):
-        await userbot.copy_message(channel_id, m.chat.id, m.id)
-        await asyncio.sleep(1)
         replies.append(m)
-    return await message.reply("下载完毕,请前往[下载神器保存频道]查看下载结果")
-    return
     count = 1
     try:
         for m in reversed(replies):
